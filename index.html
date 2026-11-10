@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dungeon Run Schedule</title>
+<style>
+:root{--bg:#f4f2ee;--card:#fff;--ink:#1d1b22;--muted:#6b6776;--line:#dedae3;--accent:#6d3fd1;--accent-ink:#fff;--good:#1f8a4c;--warn:#a85a08;--cell:#ece9f1}
+@media(prefers-color-scheme:dark){:root{--bg:#15131b;--card:#1f1c28;--ink:#eeeaf6;--muted:#a09ab0;--line:#342f42;--accent:#9a75f0;--accent-ink:#15131b;--good:#3fae72;--warn:#e6a04a;--cell:#2a2636}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:860px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:0}
+h2{font-size:16px;margin:0}
+.sub{margin:2px 0 0;color:var(--muted);font-size:13px}
+.top{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center;margin-bottom:14px}
+.clocks{display:flex;gap:8px}
+.clock{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 12px;font-size:12px;color:var(--muted)}
+.clock b{display:block;font-size:16px;color:var(--ink);font-variant-numeric:tabular-nums}
+.clock.mine{border-color:var(--accent)}
+.banner{background:color-mix(in srgb,var(--warn) 14%,var(--card));border:1px solid var(--warn);border-radius:10px;padding:8px 12px;margin-bottom:14px;font-size:13px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px}
+.head{display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;margin-bottom:10px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.grow{flex:1}
+input,select,button{font:inherit;color:var(--ink);border-radius:8px;border:1px solid var(--line);background:var(--bg);padding:7px 10px;min-height:36px}
+input{min-width:0}
+button{cursor:pointer;background:var(--accent);color:var(--accent-ink);border-color:transparent;font-weight:600}
+button.ghost{background:transparent;color:var(--ink);border-color:var(--line);font-weight:500}
+button.small{min-height:30px;padding:4px 10px;font-size:13px}
+button:disabled{opacity:.45;cursor:default}
+.hint,.empty{color:var(--muted);font-size:13px;margin:0 0 10px}
+.empty{margin:4px 0 12px}
+.item{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px}
+.item .row{margin-top:8px}
+.title{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-weight:600}
+.pill{background:var(--accent);color:var(--accent-ink);border-radius:99px;padding:1px 9px;font-size:12px;font-weight:600;white-space:nowrap}
+.pill.good{background:var(--good);color:#fff}
+.pill.soft{background:var(--cell);color:var(--ink)}
+.dual{margin-top:6px;font-size:14px;font-variant-numeric:tabular-nums}
+.dual div{color:var(--muted)}
+.dual .mine{color:var(--ink);font-weight:600}
+.zl{display:inline-block;min-width:88px;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.who{font-size:13px;color:var(--muted);margin-top:4px}
+.note{font-size:13px;margin-top:4px}
+form.row{margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+form.row input[type=text]{flex:1 1 150px}
+.tabs{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.tabs button{border:0;border-radius:0;background:transparent;color:var(--ink);font-weight:500;min-height:32px}
+.tabs button.on{background:var(--accent);color:var(--accent-ink)}
+.g{display:grid;grid-template-columns:38px repeat(7,minmax(0,1fr)) 56px;gap:2px;user-select:none;-webkit-user-select:none}
+.gh{font-size:12px;color:var(--muted);text-align:center;padding-bottom:2px}
+.gt{font-size:11px;color:var(--muted);display:flex;align-items:center;justify-content:flex-end;padding-right:4px;font-variant-numeric:tabular-nums}
+.gt.o{justify-content:flex-start;padding:0 0 0 4px;gap:3px}
+.gt small{font-size:9px;opacity:.8}
+.c{border:0;border-radius:4px;background:var(--cell);height:26px;min-height:0;padding:0;font-size:11px;font-weight:600;color:var(--ink);touch-action:manipulation}
+.c.on{background:var(--accent)}
+.c.full{background:var(--good);color:#fff}
+.c:disabled{opacity:.6}
+#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:10px;font-size:13px;max-width:90vw}
+</style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <div>
+      <h1>Dungeon Run Schedule</h1>
+      <p class="sub">Every time is shown for both Fargo and the Philippines.</p>
+    </div>
+    <div class="clocks" id="clocks"></div>
+  </header>
+
+  <div class="banner" id="banner" hidden>Preview mode: everything is saved only in this browser. Teammates cannot see it until the shared database is connected.</div>
+
+  <section class="card">
+    <div class="head"><h2>Who are you?</h2></div>
+    <div class="row">
+      <select id="who" aria-label="Your name"></select>
+      <select id="myClass" aria-label="Your Flyff class"></select>
+      <button class="ghost small" id="removeMe" type="button">Remove</button>
+      <span class="grow"></span>
+      <input id="newName" type="text" placeholder="New player name" maxlength="24" aria-label="New player name">
+      <button id="addPlayer" type="button">Add player</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="head"><h2>Upcoming runs</h2></div>
+    <div id="runs"></div>
+    <form class="row" id="runForm">
+      <input type="text" id="runName" placeholder="Dungeon name" maxlength="40" aria-label="Dungeon name">
+      <input type="datetime-local" id="when" required aria-label="Start time in your local time">
+      <input type="text" id="runNote" placeholder="Note (optional)" maxlength="80" aria-label="Note">
+      <button type="submit">Create run</button>
+    </form>
+    <div id="whenPreview"></div>
+  </section>
+
+  <section class="card">
+    <div class="head">
+      <h2>Best times in the next 7 days</h2>
+      <label class="row" style="font-size:13px">Need at least <select id="need"></select> players</label>
+    </div>
+    <div id="best"></div>
+  </section>
+
+  <section class="card">
+    <div class="head">
+      <h2>Weekly hours</h2>
+      <div class="tabs"><button type="button" data-mode="my">My hours</button><button type="button" data-mode="team">Team</button></div>
+    </div>
+    <p class="hint" id="gridHint"></p>
+    <div id="grid"></div>
+    <div class="row" style="margin-top:10px"><button class="ghost small" id="clearMine" type="button">Clear my hours</button></div>
+  </section>
+</main>
+<div id="toast" hidden></div>
+
+<script>
+// Shared database settings. Leave empty to run in preview mode (this browser only).
+const CONFIG = { supabaseUrl: "https://efolmrzvpqktgmyvgndq.supabase.co", supabaseKey: "sb_publishable_0AGjUaATE6yhshPuoNThPA_QSCNGmfw" };
+
+const FARGO = "America/Chicago", PH = "Asia/Manila", HOUR = 3600e3;
+const DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+// Flyff Universe classes, grouped by job tier.
+const CLASSES = [
+  ["Second job", ["Blade", "Knight", "Jester", "Ranger", "Ringmaster", "Billposter", "Psykeeper", "Elementor"]],
+  ["Third job", ["Slayer", "Templar", "Harlequin", "Crackshooter", "Seraph", "Force Master", "Mentalist", "Arcanist"]],
+  ["First job", ["Mercenary", "Acrobat", "Assist", "Magician", "Vagrant"]],
+];
+const classOptions = (sel, blank) => `<option value="">${blank}</option>` + CLASSES.map(([g, list]) =>
+  `<optgroup label="${g}">${list.map(c => `<option${c === sel ? " selected" : ""}>${c}</option>`).join("")}</optgroup>`).join("");
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+
+// ---------- time zones ----------
+function validTz(tz) { try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return tz; } catch { return FARGO; } }
+const browserTz = validTz(Intl.DateTimeFormat().resolvedOptions().timeZone || FARGO);
+const fmtCache = {};
+function partsOf(ms, tz) {
+  const f = fmtCache[tz] || (fmtCache[tz] = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", hourCycle: "h23", hour: "2-digit", minute: "2-digit", year: "numeric", month: "2-digit", day: "2-digit" }));
+  const o = {};
+  for (const p of f.formatToParts(ms)) o[p.type] = p.value;
+  return { dow: DOW.indexOf(o.weekday), hour: +o.hour % 24, minute: +o.minute, y: +o.year, m: +o.month, d: +o.day };
+}
+function offsetMin(tz, ms = Date.now()) {
+  const p = partsOf(ms, tz);
+  return Math.round((Date.UTC(p.y, p.m - 1, p.d, p.hour, p.minute) - Math.floor(ms / 60000) * 60000) / 60000);
+}
+const viewerZone = offsetMin(browserTz) === offsetMin(PH) ? PH : offsetMin(browserTz) === offsetMin(FARGO) ? FARGO : null;
+const otherTz = viewerZone === PH ? FARGO : PH;
+const zoneName = tz => tz === PH ? "Philippines" : "Fargo";
+const fmtWhen = (ms, tz) => new Date(ms).toLocaleString("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const fmtClock = (ms, tz) => new Date(ms).toLocaleString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" });
+const hl = h => (h % 12 || 12) + (h < 12 ? "a" : "p");
+function zones() {
+  const z = [[FARGO, "Fargo"], [PH, "Philippines"]];
+  if (!viewerZone) z.unshift([browserTz, "Your time"]);
+  return z;
+}
+const isMine = tz => viewerZone ? tz === viewerZone : tz === browserTz;
+function dualHtml(ms, end) {
+  return '<div class="dual">' + zones().map(([tz, label]) =>
+    `<div class="${isMine(tz) ? "mine" : ""}"><span class="zl">${label}</span> ${fmtWhen(ms, tz)}${end ? " – " + fmtClock(end, tz) : ""}</div>`).join("") + "</div>";
+}
+function dualText(ms) { return zones().map(([tz, label]) => `${label}: ${fmtWhen(ms, tz)}`).join("\n"); }
+
+// ---------- storage ----------
+const remote = !!(CONFIG.supabaseUrl && CONFIG.supabaseKey);
+async function api(path, opts = {}) {
+  const r = await fetch(CONFIG.supabaseUrl.replace(/\/$/, "") + "/rest/v1/" + path, { ...opts, headers: { apikey: CONFIG.supabaseKey, "Content-Type": "application/json", ...(opts.headers || {}) } });
+  const t = await r.text();
+  if (!r.ok) throw new Error(t || r.statusText);
+  return t ? JSON.parse(t) : null;
+}
+const upsert = { Prefer: "resolution=merge-duplicates,return=minimal" };
+const remoteStore = {
+  async load() { const [players, runs] = await Promise.all([api("players?select=*"), api("runs?select=*")]); return { players, runs }; },
+  savePlayer: p => api("players", { method: "POST", headers: upsert, body: JSON.stringify(p) }),
+  deletePlayer: id => api("players?id=eq." + encodeURIComponent(id), { method: "DELETE" }),
+  saveRun: r => api("runs", { method: "POST", headers: upsert, body: JSON.stringify(r) }),
+  deleteRun: id => api("runs?id=eq." + encodeURIComponent(id), { method: "DELETE" }),
+};
+const localStore = {
+  read() { try { return JSON.parse(lsGet("drs.data")) || { players: [], runs: [] }; } catch { return { players: [], runs: [] }; } },
+  put(list, item) { const i = list.findIndex(x => x.id === item.id); if (i < 0) list.push(item); else list[i] = item; },
+  async load() { return this.read(); },
+  async savePlayer(p) { const d = this.read(); this.put(d.players, p); lsSet("drs.data", JSON.stringify(d)); },
+  async deletePlayer(id) { const d = this.read(); d.players = d.players.filter(x => x.id !== id); lsSet("drs.data", JSON.stringify(d)); },
+  async saveRun(r) { const d = this.read(); this.put(d.runs, r); lsSet("drs.data", JSON.stringify(d)); },
+  async deleteRun(id) { const d = this.read(); d.runs = d.runs.filter(x => x.id !== id); lsSet("drs.data", JSON.stringify(d)); },
+};
+const store = remote ? remoteStore : localStore;
+
+// ---------- state ----------
+let state = { players: [], runs: [] };
+let me = lsGet("drs.me") || "";
+let mode = "my";
+let need = +lsGet("drs.need") || 0;
+let dirty = false, saveTimer = null, painting = null, teamMap = {};
+
+function normalize(d) {
+  const players = (d.players || []).map(p => {
+    const slots = Array.isArray(p.slots) ? p.slots.filter(n => Number.isInteger(n) && n >= 0 && n < 168) : [];
+    return { id: String(p.id), name: String(p.name || "?"), tz: validTz(p.tz), cls: p.cls || "", slots, slotSet: new Set(slots) };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+  const runs = (d.runs || []).filter(r => !isNaN(Date.parse(r.start))).map(r => ({ id: String(r.id), name: String(r.name || "Dungeon run"), start: r.start, note: r.note || "", by: r.by || null, members: Array.isArray(r.members) ? r.members : [], classes: r.classes && typeof r.classes === "object" ? r.classes : {} }));
+  return { players, runs };
+}
+const ser = p => ({ id: p.id, name: p.name, tz: p.tz, cls: p.cls, slots: p.slots });
+const mePlayer = () => state.players.find(p => p.id === me);
+const nameOf = id => (state.players.find(p => p.id === id) || {}).name;
+// "Name (Class)". Pass a run to use the class picked for that run.
+function tag(id, r) {
+  const p = state.players.find(x => x.id === id);
+  if (!p) return "";
+  const c = r ? r.classes[id] : p.cls;
+  return p.name + (c ? ` (${c})` : "");
+}
+const at = r => Date.parse(r.start);
+
+let toastTimer;
+function toast(msg) { const t = $("toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, 3500); }
+function fail(e) { console.error(e); toast("Could not save. Check your connection and try again."); }
+// Every local change bumps `edits`; a background refresh that overlaps one is thrown away
+// so it cannot overwrite what was just changed on this device.
+let edits = 0, pending = 0;
+async function run(promise) { edits++; pending++; try { await promise; } catch (e) { fail(e); } finally { pending--; } }
+
+async function refresh() {
+  if (dirty || pending || painting !== null) return;
+  const seen = edits;
+  try {
+    const data = normalize(await store.load());
+    if (seen !== edits || dirty || pending || painting !== null) return void setTimeout(refresh, 3000);
+    state = data; render();
+  } catch (e) { console.error(e); toast("Could not load the schedule."); }
+}
+function queueSave(p) {
+  dirty = true; edits++;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => { await run(store.savePlayer(ser(p))); dirty = false; }, 500);
+}
+
+// ---------- team availability ----------
+function teamHours() {
+  const start = Math.ceil(Date.now() / HOUR) * HOUR, out = [];
+  for (let i = 0; i < 168; i++) {
+    const t = start + i * HOUR;
+    out.push({ t, who: state.players.filter(p => { const q = partsOf(t, p.tz); return p.slotSet.has(q.dow * 24 + q.hour); }).map(p => p.id) });
+  }
+  return out;
+}
+
+// ---------- render ----------
+function render() { renderWho(); renderRuns(); renderBest(); renderGrid(); }
+
+function renderClocks() {
+  const now = Date.now();
+  $("clocks").innerHTML = [FARGO, PH].map(tz =>
+    `<div class="clock ${isMine(tz) ? "mine" : ""}">${zoneName(tz)} · ${new Date(now).toLocaleString("en-US", { timeZone: tz, weekday: "short" })}<b>${fmtClock(now, tz)}</b></div>`).join("");
+}
+
+function renderWho() {
+  const sel = $("who");
+  sel.innerHTML = '<option value="">Choose your name…</option>' + state.players.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+  const p = mePlayer();
+  sel.value = p ? me : "";
+  $("myClass").innerHTML = classOptions(p ? p.cls : "", "Choose your class…");
+  $("myClass").disabled = !p;
+  $("removeMe").disabled = !p;
+}
+
+function countdown(ms) {
+  const d = ms - Date.now();
+  if (d <= 0) return "Started";
+  const m = Math.floor(d / 60000), days = Math.floor(m / 1440), h = Math.floor(m % 1440 / 60);
+  return "in " + (days ? `${days}d ${h}h` : h ? `${h}h ${m % 60}m` : `${m}m`);
+}
+
+function renderRuns() {
+  const list = state.runs.filter(r => at(r) > Date.now() - 3 * HOUR).sort((a, b) => at(a) - at(b));
+  if (!list.length) { $("runs").innerHTML = '<p class="empty">No runs planned yet. Pick a time below, or use "Plan a run" on one of the best times.</p>'; return; }
+  const hasMe = !!mePlayer();
+  $("runs").innerHTML = list.map(r => {
+    const names = r.members.map(id => tag(id, r)).filter(Boolean), inRun = hasMe && r.members.includes(me);
+    return `<div class="item">
+      <div class="title">${esc(r.name)} <span class="pill">${countdown(at(r))}</span> <span class="pill soft">${names.length} of ${state.players.length} in</span></div>
+      ${dualHtml(at(r))}
+      ${r.note ? `<div class="note">${esc(r.note)}</div>` : ""}
+      <div class="who">${names.length ? "Going: " + names.map(esc).join(", ") : "Nobody has joined yet."}</div>
+      <div class="row">
+        <button class="small ${inRun ? "ghost" : ""}" data-act="${inRun ? "leave" : "join"}" data-id="${esc(r.id)}" ${hasMe ? "" : "disabled"}>${inRun ? "Leave" : "I'm in"}</button>
+        ${inRun ? `<select class="small" data-cls="${esc(r.id)}" aria-label="Class you bring to this run">${classOptions(r.classes[me] || "", "Class for this run…")}</select>` : ""}
+        <button class="small ghost" data-act="copy" data-id="${esc(r.id)}">Copy invite</button>
+        <button class="small ghost" data-act="del" data-id="${esc(r.id)}">Delete</button>
+      </div></div>`;
+  }).join("");
+}
+
+function renderBest() {
+  const n = state.players.length, sel = $("need");
+  if (n < 2) { sel.innerHTML = ""; sel.disabled = true; $("best").innerHTML = '<p class="empty">Add at least two players and mark their hours to see matching times.</p>'; return; }
+  const want = Math.min(Math.max(need || n, 2), n);
+  sel.disabled = false;
+  sel.innerHTML = Array.from({ length: n - 1 }, (_, i) => `<option>${i + 2}</option>`).join("");
+  sel.value = want;
+  const wins = []; let cur = null;
+  for (const h of teamHours()) {
+    const key = h.who.join(",");
+    if (h.who.length < want) { cur = null; continue; }
+    if (cur && cur.key === key && cur.end === h.t) cur.end = h.t + HOUR;
+    else wins.push(cur = { key, who: h.who, start: h.t, end: h.t + HOUR });
+  }
+  wins.sort((a, b) => b.who.length - a.who.length || a.start - b.start);
+  if (!wins.length) { $("best").innerHTML = `<p class="empty">No time in the next 7 days when ${want} players are free. Lower the number, or ask teammates to add more hours.</p>`; return; }
+  $("best").innerHTML = wins.slice(0, 6).map(w => {
+    const missing = state.players.filter(p => !w.who.includes(p.id)).map(p => p.name);
+    return `<div class="item">
+      <div class="title"><span class="pill ${w.who.length === n ? "good" : ""}">${w.who.length} of ${n} free</span> ${(w.end - w.start) / HOUR} hour${w.end - w.start > HOUR ? "s" : ""}</div>
+      ${dualHtml(w.start, w.end)}
+      <div class="who">${w.who.map(id => tag(id)).map(esc).join(", ")}${missing.length ? " · not free: " + missing.map(esc).join(", ") : ""}</div>
+      <div class="row"><button class="small" data-plan="${w.start}">Plan a run</button></div></div>`;
+  }).join("");
+}
+
+function renderGrid() {
+  const p = mePlayer(), n = state.players.length;
+  document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
+  $("clearMine").hidden = mode !== "my" || !p;
+  $("gridHint").textContent = mode === "team"
+    ? "Players free each hour over the next 7 days, in your local time. Tap a cell to see who."
+    : p ? `Tap the hours you can usually play, in your own local time. The right column shows the same hour in ${zoneName(otherTz)}.`
+        : "Choose or add your name above to mark your hours.";
+  teamMap = {};
+  if (mode === "team") for (const h of teamHours()) { const q = partsOf(h.t, browserTz); teamMap[q.dow * 24 + q.hour] = h.who; }
+  const diff = Math.round((offsetMin(otherTz) - offsetMin(browserTz)) / 60);
+  let html = '<div class="g"><div class="gh">You</div>' + DOW.map(d => `<div class="gh">${d}</div>`).join("") + `<div class="gh">${otherTz === PH ? "PH" : "Fargo"}</div>`;
+  for (let h = 0; h < 24; h++) {
+    html += `<div class="gt">${hl(h)}</div>`;
+    for (let d = 0; d < 7; d++) {
+      const i = d * 24 + h;
+      if (mode === "team") {
+        const c = (teamMap[i] || []).length, pct = n ? Math.round(c / n * 100) : 0;
+        html += `<button type="button" class="c ${c && c === n ? "full" : ""}" data-i="${i}" style="${c && c < n ? `background:color-mix(in srgb,var(--accent) ${pct}%,var(--cell))` : ""}" aria-label="${DOW[d]} ${hl(h)}: ${c} free">${c || ""}</button>`;
+      } else {
+        const on = !!p && p.slotSet.has(i);
+        html += `<button type="button" class="c ${on ? "on" : ""}" data-i="${i}" aria-pressed="${on}" aria-label="${DOW[d]} ${hl(h)}" ${p ? "" : "disabled"}></button>`;
+      }
+    }
+    const oh = h + diff, sh = Math.floor(oh / 24);
+    html += `<div class="gt o">${hl(((oh % 24) + 24) % 24)}${sh ? `<small>${sh > 0 ? "+1d" : "−1d"}</small>` : ""}</div>`;
+  }
+  $("grid").innerHTML = html + "</div>";
+}
+
+// ---------- actions ----------
+function setSlot(p, cell, on) {
+  const i = +cell.dataset.i;
+  if (on) p.slotSet.add(i); else p.slotSet.delete(i);
+  cell.classList.toggle("on", on);
+  cell.setAttribute("aria-pressed", on);
+  p.slots = [...p.slotSet].sort((a, b) => a - b);
+  p.tz = browserTz;
+  queueSave(p);
+  renderBest();
+}
+function toLocalInput(ms) {
+  const d = new Date(ms), z = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}`;
+}
+function updateWhenPreview() {
+  const ms = new Date($("when").value).getTime();
+  $("whenPreview").innerHTML = isNaN(ms) ? "" : dualHtml(ms);
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand("copy"); ta.remove();
+  }
+  toast("Invite copied. Paste it in your group chat.");
+}
+
+$("who").addEventListener("change", e => { me = e.target.value; lsSet("drs.me", me); render(); });
+$("myClass").addEventListener("change", e => {
+  const p = mePlayer();
+  if (!p) return;
+  p.cls = e.target.value;
+  queueSave(p);
+  renderBest();
+});
+$("runs").addEventListener("change", async e => {
+  const r = state.runs.find(x => x.id === e.target.dataset.cls);
+  if (!r || !mePlayer()) return;
+  r.classes = { ...r.classes, [me]: e.target.value };
+  renderRuns();
+  await run(store.saveRun(r));
+});
+$("addPlayer").addEventListener("click", async () => {
+  const name = $("newName").value.trim();
+  if (!name) { $("newName").focus(); return; }
+  if (state.players.some(p => p.name.toLowerCase() === name.toLowerCase())) { toast("That name is already on the list."); return; }
+  const p = { id: uid(), name, tz: browserTz, cls: "", slots: [], slotSet: new Set() };
+  state.players.push(p);
+  state.players.sort((a, b) => a.name.localeCompare(b.name));
+  me = p.id; lsSet("drs.me", me);
+  $("newName").value = "";
+  render();
+  await run(store.savePlayer(ser(p)));
+});
+$("newName").addEventListener("keydown", e => { if (e.key === "Enter") $("addPlayer").click(); });
+$("removeMe").addEventListener("click", async () => {
+  const p = mePlayer();
+  if (!p || !confirm(`Remove ${p.name} and their hours from the schedule?`)) return;
+  state.players = state.players.filter(x => x.id !== p.id);
+  me = ""; lsSet("drs.me", "");
+  render();
+  await run(store.deletePlayer(p.id));
+});
+$("need").addEventListener("change", e => { need = +e.target.value; lsSet("drs.need", need); renderBest(); });
+document.querySelector(".tabs").addEventListener("click", e => { const b = e.target.closest("button"); if (b) { mode = b.dataset.mode; renderGrid(); } });
+$("clearMine").addEventListener("click", () => {
+  const p = mePlayer();
+  if (!p || !p.slots.length || !confirm("Clear all of your hours?")) return;
+  p.slotSet.clear(); p.slots = []; queueSave(p); render();
+});
+
+const grid = $("grid");
+grid.addEventListener("pointerdown", e => {
+  const c = e.target.closest(".c"), p = mePlayer();
+  if (!c || !p || mode !== "my" || e.pointerType !== "mouse" || e.button !== 0) return;
+  e.preventDefault();
+  painting = !p.slotSet.has(+c.dataset.i);
+  setSlot(p, c, painting);
+});
+grid.addEventListener("pointerover", e => {
+  if (painting === null) return;
+  const c = e.target.closest(".c"), p = mePlayer();
+  if (c && p) setSlot(p, c, painting);
+});
+window.addEventListener("pointerup", () => { painting = null; });
+grid.addEventListener("click", e => {
+  const c = e.target.closest(".c");
+  if (!c) return;
+  const i = +c.dataset.i;
+  if (mode === "team") {
+    const names = (teamMap[i] || []).map(nameOf).filter(Boolean);
+    $("gridHint").textContent = `${DOW[Math.floor(i / 24)]} ${hl(i % 24)}: ${names.length ? names.join(", ") + " free" : "nobody free"}`;
+    return;
+  }
+  if (e.pointerType === "mouse") return; // mouse is handled by pointerdown so dragging can paint
+  const p = mePlayer();
+  if (p) setSlot(p, c, !p.slotSet.has(i));
+});
+
+$("best").addEventListener("click", e => {
+  const b = e.target.closest("[data-plan]");
+  if (!b) return;
+  $("when").value = toLocalInput(+b.dataset.plan);
+  updateWhenPreview();
+  $("runForm").scrollIntoView({ behavior: "smooth", block: "center" });
+  $("runName").focus({ preventScroll: true });
+});
+$("when").addEventListener("input", updateWhenPreview);
+$("runForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const ms = new Date($("when").value).getTime();
+  if (isNaN(ms)) { toast("Pick a start time first."); return; }
+  const r = { id: uid(), name: $("runName").value.trim() || "Dungeon run", start: new Date(ms).toISOString(), note: $("runNote").value.trim(), by: mePlayer() ? me : null, members: mePlayer() ? [me] : [], classes: mePlayer() ? { [me]: mePlayer().cls } : {} };
+  state.runs.push(r);
+  $("runName").value = ""; $("runNote").value = "";
+  renderRuns();
+  await run(store.saveRun(r));
+});
+$("runs").addEventListener("click", async e => {
+  const b = e.target.closest("[data-act]");
+  if (!b) return;
+  const r = state.runs.find(x => x.id === b.dataset.id);
+  if (!r) return;
+  const act = b.dataset.act;
+  if (act === "copy") {
+    const link = location.protocol.startsWith("http") ? "\n" + location.href : "";
+    const going = r.members.map(id => tag(id, r)).filter(Boolean);
+    return copyText(`${r.name}\n${dualText(at(r))}${r.note ? "\n" + r.note : ""}${going.length ? "\nGoing: " + going.join(", ") : ""}${link}`);
+  }
+  if (act === "del") {
+    if (!confirm(`Delete "${r.name}"?`)) return;
+    state.runs = state.runs.filter(x => x.id !== r.id);
+    renderRuns();
+    return run(store.deleteRun(r.id));
+  }
+  if (!mePlayer()) return;
+  r.classes = { ...r.classes };
+  if (act === "join") { r.members = [...new Set([...r.members, me])]; r.classes[me] = mePlayer().cls; }
+  else { r.members = r.members.filter(id => id !== me); delete r.classes[me]; }
+  renderRuns();
+  await run(store.saveRun(r));
+});
+
+// ---------- start ----------
+$("banner").hidden = remote;
+$("when").value = toLocalInput(Math.ceil(Date.now() / HOUR) * HOUR);
+updateWhenPreview();
+renderClocks();
+refresh();
+setInterval(() => { renderClocks(); renderRuns(); }, 30000);
+if (remote) {
+  setInterval(refresh, 30000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+}
+</script>
+</body>
+</html>
