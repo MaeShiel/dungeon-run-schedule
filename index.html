@@ -49,6 +49,9 @@ form.row input[type=text]{flex:1 1 150px}
 .tabs button{border:0;border-radius:0;background:transparent;color:var(--ink);font-weight:500;min-height:32px}
 .tabs button.on{background:var(--accent);color:var(--accent-ink)}
 .g{display:grid;grid-template-columns:38px repeat(7,minmax(0,1fr)) 56px;gap:2px;user-select:none;-webkit-user-select:none}
+.g.solo{grid-template-columns:38px repeat(7,minmax(0,1fr))}
+input[type=checkbox]{min-height:0;padding:0;margin:0 4px 0 0;accent-color:var(--accent)}
+.both{display:inline-flex;align-items:center;margin-top:6px;cursor:pointer}
 .gh{font-size:12px;color:var(--muted);text-align:center;padding-bottom:2px}
 .gt{font-size:11px;color:var(--muted);display:flex;align-items:center;justify-content:flex-end;padding-right:4px;font-variant-numeric:tabular-nums}
 .gt.o{justify-content:flex-start;padding:0 0 0 4px;gap:3px}
@@ -65,7 +68,8 @@ form.row input[type=text]{flex:1 1 150px}
   <header class="top">
     <div>
       <h1>Dungeon Run Schedule</h1>
-      <p class="sub">Every time is shown for both Fargo and the Philippines.</p>
+      <p class="sub" id="sub"></p>
+      <label class="sub both"><input type="checkbox" id="both"> Also show the other time zone</label>
     </div>
     <div class="clocks" id="clocks"></div>
   </header>
@@ -156,17 +160,23 @@ const zoneName = tz => tz === PH ? "Philippines" : "Fargo";
 const fmtWhen = (ms, tz) => new Date(ms).toLocaleString("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const fmtClock = (ms, tz) => new Date(ms).toLocaleString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" });
 const hl = h => (h % 12 || 12) + (h < 12 ? "a" : "p");
-function zones() {
+// By default each viewer sees only their own local time. The checkbox in the header adds the other zone.
+let showBoth = lsGet("drs.both") === "1";
+const myTz = viewerZone || browserTz;
+const myLabel = viewerZone ? zoneName(viewerZone) : "Your time";
+function allZones() {
   const z = [[FARGO, "Fargo"], [PH, "Philippines"]];
   if (!viewerZone) z.unshift([browserTz, "Your time"]);
   return z;
 }
-const isMine = tz => viewerZone ? tz === viewerZone : tz === browserTz;
+const zones = () => showBoth ? allZones() : [[myTz, myLabel]];
+const isMine = tz => tz === myTz;
 function dualHtml(ms, end) {
   return '<div class="dual">' + zones().map(([tz, label]) =>
-    `<div class="${isMine(tz) ? "mine" : ""}"><span class="zl">${label}</span> ${fmtWhen(ms, tz)}${end ? " – " + fmtClock(end, tz) : ""}</div>`).join("") + "</div>";
+    `<div class="${isMine(tz) ? "mine" : ""}">${showBoth ? `<span class="zl">${label}</span> ` : ""}${fmtWhen(ms, tz)}${end ? " – " + fmtClock(end, tz) : ""}</div>`).join("") + "</div>";
 }
-function dualText(ms) { return zones().map(([tz, label]) => `${label}: ${fmtWhen(ms, tz)}`).join("\n"); }
+// Invites go to the whole group chat, so they always list both zones.
+function dualText(ms) { return allZones().map(([tz, label]) => `${label}: ${fmtWhen(ms, tz)}`).join("\n"); }
 
 // ---------- storage ----------
 const remote = !!(CONFIG.supabaseUrl && CONFIG.supabaseKey);
@@ -260,8 +270,9 @@ function render() { renderWho(); renderRuns(); renderBest(); renderGrid(); }
 
 function renderClocks() {
   const now = Date.now();
-  $("clocks").innerHTML = [FARGO, PH].map(tz =>
-    `<div class="clock ${isMine(tz) ? "mine" : ""}">${zoneName(tz)} · ${new Date(now).toLocaleString("en-US", { timeZone: tz, weekday: "short" })}<b>${fmtClock(now, tz)}</b></div>`).join("");
+  $("sub").textContent = showBoth ? "Times are shown for both Fargo and the Philippines." : `All times are shown in your own local time (${viewerZone ? zoneName(viewerZone) : browserTz}).`;
+  $("clocks").innerHTML = zones().map(([tz, label]) =>
+    `<div class="clock ${isMine(tz) ? "mine" : ""}">${label} ·${new Date(now).toLocaleString("en-US", { timeZone: tz, weekday: "short" })}<b>${fmtClock(now, tz)}</b></div>`).join("");
 }
 
 function renderWho() {
@@ -333,12 +344,12 @@ function renderGrid() {
   $("clearMine").hidden = mode !== "my" || !p;
   $("gridHint").textContent = mode === "team"
     ? "Players free each hour over the next 7 days, in your local time. Tap a cell to see who."
-    : p ? `Tap the hours you can usually play, in your own local time. The right column shows the same hour in ${zoneName(otherTz)}.`
+    : p ? "Tap the hours you can usually play, in your own local time." + (showBoth ? ` The right column shows the same hour in ${zoneName(otherTz)}.` : "")
         : "Choose or add your name above to mark your hours.";
   teamMap = {};
   if (mode === "team") for (const h of teamHours()) { const q = partsOf(h.t, browserTz); teamMap[q.dow * 24 + q.hour] = h.who; }
   const diff = Math.round((offsetMin(otherTz) - offsetMin(browserTz)) / 60);
-  let html = '<div class="g"><div class="gh">You</div>' + DOW.map(d => `<div class="gh">${d}</div>`).join("") + `<div class="gh">${otherTz === PH ? "PH" : "Fargo"}</div>`;
+  let html = `<div class="g ${showBoth ? "" : "solo"}"><div class="gh">${showBoth ? "You" : ""}</div>` + DOW.map(d => `<div class="gh">${d}</div>`).join("") + (showBoth ? `<div class="gh">${otherTz === PH ? "PH" : "Fargo"}</div>` : "");
   for (let h = 0; h < 24; h++) {
     html += `<div class="gt">${hl(h)}</div>`;
     for (let d = 0; d < 7; d++) {
@@ -352,7 +363,7 @@ function renderGrid() {
       }
     }
     const oh = h + diff, sh = Math.floor(oh / 24);
-    html += `<div class="gt o">${hl(((oh % 24) + 24) % 24)}${sh ? `<small>${sh > 0 ? "+1d" : "−1d"}</small>` : ""}</div>`;
+    if (showBoth) html += `<div class="gt o">${hl(((oh % 24) + 24) % 24)}${sh ? `<small>${sh > 0 ? "+1d" : "−1d"}</small>` : ""}</div>`;
   }
   $("grid").innerHTML = html + "</div>";
 }
@@ -386,6 +397,12 @@ async function copyText(text) {
   toast("Invite copied. Paste it in your group chat.");
 }
 
+$("both").checked = showBoth;
+$("both").addEventListener("change", e => {
+  showBoth = e.target.checked;
+  lsSet("drs.both", showBoth ? "1" : "0");
+  renderClocks(); updateWhenPreview(); render();
+});
 $("who").addEventListener("change", e => { me = e.target.value; lsSet("drs.me", me); render(); });
 $("myClass").addEventListener("change", e => {
   const p = mePlayer();
