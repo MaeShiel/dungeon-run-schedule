@@ -314,11 +314,12 @@ function renderRuns() {
 
 function renderBest() {
   const n = state.players.length, sel = $("need");
-  if (n < 2) { sel.innerHTML = ""; sel.disabled = true; $("best").innerHTML = '<p class="empty">Add at least two players and mark their hours to see matching times.</p>'; return; }
-  const want = Math.min(Math.max(need || n, 2), n);
-  sel.disabled = false;
-  sel.innerHTML = Array.from({ length: n - 1 }, (_, i) => `<option>${i + 2}</option>`).join("");
+  // Always offer 2 to 5. Until someone picks a number, default to everyone on the list.
+  const want = Math.min(Math.max(need || n, 2), 5);
+  sel.innerHTML = [2, 3, 4, 5].map(v => `<option>${v}</option>`).join("");
   sel.value = want;
+  if (n < 2) { $("best").innerHTML = '<p class="empty">Add at least two players and mark their hours to see matching times.</p>'; return; }
+  if (want > n) { $("best").innerHTML = `<p class="empty">Only ${n} players are on the list, so ${want} can never be free at once. Choose a lower number or add more players.</p>`; return; }
   const wins = []; let cur = null;
   for (const h of teamHours()) {
     const key = h.who.join(",");
