@@ -46,7 +46,8 @@ button:disabled{opacity:.45;cursor:default}
 h3{font-size:12px;margin:16px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
 details.loot{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
 details.loot summary{cursor:pointer;font-weight:600;font-size:14px}
-.lrow{display:grid;grid-template-columns:minmax(0,1fr) 60px 100px 96px 36px;gap:6px;margin-top:6px;align-items:center}
+.lrow{display:grid;grid-template-columns:36px minmax(0,1fr) 60px 100px 96px 36px;gap:6px;margin-top:6px;align-items:center}
+.lrow.add [data-n=name]{grid-column:1/3}
 .lrow input,.lrow select{width:100%;min-width:0;min-height:32px;padding:4px 8px}
 .lrow button{padding:4px 6px}
 .lrow.lh{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
@@ -55,7 +56,16 @@ details.loot summary{cursor:pointer;font-weight:600;font-size:14px}
 .split label,.sum label{display:inline-flex;align-items:center;margin:2px 0 2px 10px;cursor:pointer}
 .sum b{font-variant-numeric:tabular-nums}
 .sum .mine{color:var(--good);font-weight:600}
-@media(max-width:560px){.lrow{grid-template-columns:60px minmax(0,1fr) 96px 36px}.lrow>:first-child{grid-column:1/-1}.lrow.lh{display:none}}
+.thumb{width:36px;height:36px;min-height:0;padding:0;border:1px dashed var(--muted);border-radius:8px;background:var(--cell);color:var(--muted);font-size:18px;font-weight:400;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.thumb.has{border:1px solid var(--line)}
+.thumb img{width:100%;height:100%;object-fit:contain;display:block}
+@media(max-width:560px){
+  .lrow{grid-template-columns:36px 18px minmax(0,1fr) 96px 36px}
+  .lrow [data-f=name]{grid-column:2/-1}
+  .lrow.add [data-n=name]{grid-column:1/-1}
+  .lrow [data-f=qty],.lrow [data-n=qty]{grid-column:1/3}
+  .lrow.lh{display:none}
+}
 form.row{margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
 form.row input[type=text]{flex:1 1 150px}
 .tabs{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
@@ -132,6 +142,8 @@ input[type=checkbox]{min-height:0;padding:0;margin:0 4px 0 0;accent-color:var(--
   </section>
 </main>
 <div id="toast" hidden></div>
+<input type="file" id="picInput" accept="image/*" hidden>
+<datalist id="itemNames"></datalist>
 
 <script>
 // Shared database settings. Leave empty to run in preview mode (this browser only).
@@ -192,6 +204,7 @@ function dualHtml(ms, end) {
 function dualText(ms) { return allZones().map(([tz, label]) => `${label}: ${fmtWhen(ms, tz)}`).join("\n"); }
 
 // ---------- storage ----------
+const ITEM_ID = "_item:";
 const remote = !!(CONFIG.supabaseUrl && CONFIG.supabaseKey);
 async function api(path, opts = {}) {
   const r = await fetch(CONFIG.supabaseUrl.replace(/\/$/, "") + "/rest/v1/" + path, { ...opts, headers: { apikey: CONFIG.supabaseKey, "Content-Type": "application/json", ...(opts.headers || {}) } });
@@ -201,7 +214,15 @@ async function api(path, opts = {}) {
 }
 const upsert = { Prefer: "resolution=merge-duplicates,return=minimal" };
 const remoteStore = {
-  async load() { const [players, runs] = await Promise.all([api("players?select=*"), api("runs?select=*")]); return { players, runs }; },
+  // Item pictures live in the runs table as hidden rows (id "_item:<name>") so no new table is needed.
+  // They are left out of the regular load because they are large and rarely change.
+  async load() { const [players, runs] = await Promise.all([api("players?select=*"), api("runs?select=*&id=not.like." + encodeURIComponent(ITEM_ID) + "*")]); return { players, runs }; },
+  async loadItems() {
+    const rows = await api("runs?select=id,classes&id=like." + encodeURIComponent(ITEM_ID) + "*"), out = {};
+    for (const r of rows) out[r.id.slice(ITEM_ID.length)] = r.classes && r.classes._img;
+    return out;
+  },
+  saveItem: (key, img) => api("runs", { method: "POST", headers: upsert, body: JSON.stringify({ id: ITEM_ID + key, name: key, start: "1970-01-01T00:00:00Z", note: "", members: [], classes: { _img: img } }) }),
   savePlayer: p => api("players", { method: "POST", headers: upsert, body: JSON.stringify(p) }),
   deletePlayer: id => api("players?id=eq." + encodeURIComponent(id), { method: "DELETE" }),
   saveRun: r => api("runs", { method: "POST", headers: upsert, body: JSON.stringify(r) }),
@@ -211,6 +232,8 @@ const localStore = {
   read() { try { return JSON.parse(lsGet("drs.data")) || { players: [], runs: [] }; } catch { return { players: [], runs: [] }; } },
   put(list, item) { const i = list.findIndex(x => x.id === item.id); if (i < 0) list.push(item); else list[i] = item; },
   async load() { return this.read(); },
+  async loadItems() { return this.read().items || {}; },
+  async saveItem(key, img) { const d = this.read(); d.items = { ...(d.items || {}), [key]: img }; lsSet("drs.data", JSON.stringify(d)); },
   async savePlayer(p) { const d = this.read(); this.put(d.players, p); lsSet("drs.data", JSON.stringify(d)); },
   async deletePlayer(id) { const d = this.read(); d.players = d.players.filter(x => x.id !== id); lsSet("drs.data", JSON.stringify(d)); },
   async saveRun(r) { const d = this.read(); this.put(d.runs, r); lsSet("drs.data", JSON.stringify(d)); },
@@ -230,7 +253,7 @@ function normalize(d) {
     const slots = Array.isArray(p.slots) ? p.slots.filter(n => Number.isInteger(n) && n >= 0 && n < 168) : [];
     return { id: String(p.id), name: String(p.name || "?"), tz: validTz(p.tz), cls: p.cls || "", slots, slotSet: new Set(slots) };
   }).sort((a, b) => a.name.localeCompare(b.name));
-  const runs = (d.runs || []).filter(r => !isNaN(Date.parse(r.start))).map(r => {
+  const runs = (d.runs || []).filter(r => !isNaN(Date.parse(r.start)) && !String(r.id).startsWith(ITEM_ID)).map(r => {
     // Loot and the "received" ticks are stored inside the `classes` column (keys _loot and _paid),
     // so the database needs no new columns. serRun() puts them back when saving.
     const { _loot, _paid, ...classes } = r.classes && typeof r.classes === "object" ? r.classes : {};
@@ -319,6 +342,46 @@ function countdown(ms) {
 const DAY = 24 * HOUR;
 const openLoot = new Set(); // runs whose loot panel is open, so re-rendering keeps them open
 const clampQty = v => Math.min(Math.max(Math.round(+v) || 1, 1), 99);
+
+// Item pictures are saved once per item name and reused on every run that has that item.
+let items = {};       // item key -> small picture as a data URL
+let picKey = "";      // item waiting for the file picker
+const itemKey = name => String(name).trim().toLowerCase().replace(/\s+/g, " ");
+const picOf = name => { const p = items[itemKey(name)]; return typeof p === "string" && p.startsWith("data:image/") ? p : ""; };
+const thumbInner = name => picOf(name) ? `<img src="${esc(picOf(name))}" alt="">` : "+";
+async function loadItems() { try { items = await store.loadItems(); renderRuns(); } catch (e) { console.error(e); } }
+// Shrinks any photo or screenshot to a small thumbnail so it is quick to load on a phone.
+function shrinkImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      const s = Math.min(1, 128 / Math.max(img.width, img.height)), c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(img.width * s)); c.height = Math.max(1, Math.round(img.height * s));
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      let out = c.toDataURL("image/webp", 0.85);
+      if (out.length > 40000) out = c.toDataURL("image/jpeg", 0.8);
+      resolve(out);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("unreadable image")); };
+    img.src = url;
+  });
+}
+// Price used the last time this item was looted, to prefill the next entry.
+function lastPrice(name) {
+  const key = itemKey(name);
+  for (const r of [...state.runs].sort((x, y) => at(y) - at(x))) {
+    const it = r.loot.find(x => itemKey(x.name) === key && x.price > 0);
+    if (it) return it.price;
+  }
+  return 0;
+}
+function knownItemNames() {
+  const seen = new Map();
+  for (const r of state.runs) for (const it of r.loot) if (!seen.has(itemKey(it.name))) seen.set(itemKey(it.name), it.name);
+  for (const k of Object.keys(items)) if (!seen.has(k)) seen.set(k, k);
+  return [...seen.values()].sort((a, b) => a.localeCompare(b));
+}
 // Accepts 50m, 500k, 1.5b, or a plain number. Returns penya, or NaN if unreadable.
 function parsePenya(s) {
   const m = String(s).trim().toLowerCase().replace(/,/g, "").match(/^(\d+(?:\.\d+)?)\s*([kmb]?)$/);
@@ -356,8 +419,9 @@ function lootHtml(r) {
   const id = esc(r.id);
   return `<details class="loot" data-loot="${id}"${openLoot.has(r.id) ? " open" : ""}>
     <summary data-head>${esc(lootHead(r))}</summary>
-    ${r.loot.length ? '<div class="lrow lh"><span>Item</span><span>Qty</span><span>Price each</span><span>Sold</span><span></span></div>' : ""}
+    ${r.loot.length ? '<div class="lrow lh"><span>Pic</span><span>Item</span><span>Qty</span><span>Price each</span><span>Sold</span><span></span></div>' : ""}
     ${r.loot.map(it => `<div class="lrow" data-run="${id}" data-item="${esc(it.id)}">
+      <button type="button" class="thumb ${picOf(it.name) ? "has" : ""}" data-act="lootpic" data-id="${id}" data-item="${esc(it.id)}" title="${picOf(it.name) ? "Change" : "Add"} the picture for ${esc(it.name)}" aria-label="${picOf(it.name) ? "Change" : "Add"} the picture for ${esc(it.name)}">${thumbInner(it.name)}</button>
       <input type="text" data-f="name" value="${esc(it.name)}" maxlength="40" aria-label="Item name">
       <input type="number" data-f="qty" value="${it.qty}" min="1" max="99" aria-label="Quantity">
       <input type="text" data-f="price" value="${fmtP(it.price)}" maxlength="12" aria-label="Price for one piece">
@@ -365,7 +429,7 @@ function lootHtml(r) {
       <button type="button" class="small ghost" data-act="lootdel" data-id="${id}" data-item="${esc(it.id)}" aria-label="Remove ${esc(it.name)}">✕</button>
     </div>`).join("")}
     <div class="lrow add" data-run="${id}">
-      <input type="text" data-n="name" placeholder="Item, e.g. Sunstone" maxlength="40" aria-label="New item name">
+      <input type="text" data-n="name" list="itemNames" placeholder="Item, e.g. Sunstone" maxlength="40" aria-label="New item name">
       <input type="number" data-n="qty" value="1" min="1" max="99" aria-label="New item quantity">
       <input type="text" data-n="price" placeholder="Price each" maxlength="12" aria-label="New item price for one piece">
       <button type="button" class="small" data-act="lootadd" data-id="${id}">Add loot</button>
@@ -415,6 +479,7 @@ function renderRuns(force) {
   // A background re-render must not wipe a field someone is typing in.
   if (!force && a && box.contains(a) && a.matches("input:not([type=checkbox]),select")) return;
   const now = Date.now();
+  $("itemNames").innerHTML = knownItemNames().map(n => `<option value="${esc(n)}">`).join("");
   const up = state.runs.filter(r => at(r) > now - 3 * HOUR).sort((x, y) => at(x) - at(y));
   const past = state.runs.filter(r => at(r) <= now - 3 * HOUR && at(r) > now - 90 * DAY).sort((x, y) => at(y) - at(x)).slice(0, 15);
   box.innerHTML = `<div id="myPenya">${myPenyaHtml()}</div>`
@@ -544,7 +609,11 @@ $("runs").addEventListener("change", async e => {
   } else if (d.f) {                  // a field of an existing loot line
     const it = r.loot.find(x => x.id === row.dataset.item);
     if (!it) return;
-    if (d.f === "name") { it.name = t.value.trim() || it.name; t.value = it.name; }
+    if (d.f === "name") {
+      it.name = t.value.trim() || it.name; t.value = it.name;
+      const th = row.querySelector(".thumb");
+      th.innerHTML = thumbInner(it.name); th.classList.toggle("has", !!picOf(it.name));
+    }
     else if (d.f === "qty") {
       it.qty = clampQty(t.value); t.value = it.qty;
       it.sold = Math.min(it.sold, it.qty);
@@ -555,8 +624,22 @@ $("runs").addEventListener("change", async e => {
       it.price = p; t.value = fmtP(p);
     } else if (d.f === "sold") it.sold = Math.min(+t.value || 0, it.qty);
     updateLootView(r); // update totals in place so the next field keeps focus
+  } else if (d.n === "name") {       // new item: reuse the price from the last time it dropped
+    const price = row.querySelector("[data-n=price]"), last = lastPrice(t.value);
+    if (!price.value && last) price.value = fmtP(last);
+    return;
   } else return;
   await run(store.saveRun(serRun(r)));
+});
+$("picInput").addEventListener("change", async e => {
+  const file = e.target.files[0], key = picKey;
+  e.target.value = ""; picKey = "";
+  if (!file || !key) return;
+  let img;
+  try { img = await shrinkImage(file); } catch { toast("That file is not a picture this browser can read."); return; }
+  items = { ...items, [key]: img };
+  renderRuns(true);
+  await run(store.saveItem(key, img));
 });
 $("runs").addEventListener("toggle", e => {
   const id = e.target.dataset && e.target.dataset.loot;
@@ -658,6 +741,13 @@ $("runs").addEventListener("click", async e => {
     renderRuns(true);
     return run(store.saveRun(serRun(r)));
   }
+  if (act === "lootpic") {
+    const it = r.loot.find(x => x.id === b.dataset.item);
+    if (!it) return;
+    picKey = itemKey(it.name);
+    $("picInput").click();
+    return;
+  }
   if (act === "lootdel") {
     const it = r.loot.find(x => x.id === b.dataset.item);
     if (!it || !confirm(`Remove ${it.name} from the loot list?`)) return;
@@ -690,10 +780,12 @@ $("when").value = toLocalInput(Math.ceil(Date.now() / HOUR) * HOUR);
 updateWhenPreview();
 renderClocks();
 refresh();
+loadItems();
 setInterval(() => { renderClocks(); renderRuns(); }, 30000);
 if (remote) {
   setInterval(refresh, 30000);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+  setInterval(loadItems, 5 * 60000); // pictures change rarely
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { refresh(); loadItems(); } });
 }
 </script>
 </body>
