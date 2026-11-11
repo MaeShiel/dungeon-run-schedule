@@ -59,6 +59,7 @@ details.loot summary{cursor:pointer;font-weight:600;font-size:14px}
 .thumb{width:56px;height:56px;min-height:0;padding:0;border:1px dashed var(--muted);border-radius:8px;background:var(--cell);color:var(--muted);font-size:18px;font-weight:400;overflow:hidden;display:flex;align-items:center;justify-content:center}
 .thumb.has{border:1px solid var(--line)}
 .thumb img{width:100%;height:100%;object-fit:contain;display:block}
+.thumb img.px{image-rendering:pixelated}
 @media(max-width:560px){
   .lrow{grid-template-columns:56px minmax(0,1fr) 96px 36px}
   .lrow [data-f=name],.lrow .ln{grid-column:2/-1}
@@ -475,9 +476,14 @@ function shrinkImage(file) {
     img.onload = () => {
       const s = Math.min(1, 128 / Math.max(img.width, img.height)), c = document.createElement("canvas");
       c.width = Math.max(1, Math.round(img.width * s)); c.height = Math.max(1, Math.round(img.height * s));
-      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      const ctx = c.getContext("2d");
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(img, 0, 0, c.width, c.height);
       URL.revokeObjectURL(url);
-      let out = c.toDataURL("image/webp", 0.85);
+      // A small game icon is stored exactly as it is (lossless), so its pixels stay sharp.
+      // Only larger pictures are compressed.
+      let out = s === 1 ? c.toDataURL("image/png") : "";
+      if (!out || out.length > 40000) out = c.toDataURL("image/webp", 0.85);
       if (out.length > 40000) out = c.toDataURL("image/jpeg", 0.8);
       resolve(out);
     };
@@ -829,6 +835,11 @@ $("picInput").addEventListener("change", async e => {
   renderRuns(true);
   await run(store.saveItem(key, img));
 });
+// Game icons are tiny (32 pixels). Enlarging them the normal way smears them, so they are drawn with
+// hard pixel edges instead. Bigger pictures keep the normal smooth scaling.
+$("runs").addEventListener("load", e => {
+  if (e.target.matches && e.target.matches(".thumb img")) e.target.classList.toggle("px", e.target.naturalWidth <= 64 && e.target.naturalHeight <= 64);
+}, true);
 $("runs").addEventListener("toggle", e => {
   const id = e.target.dataset && e.target.dataset.loot;
   if (id) { if (e.target.open) openLoot.add(id); else openLoot.delete(id); }
