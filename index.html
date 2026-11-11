@@ -43,6 +43,19 @@ button:disabled{opacity:.45;cursor:default}
 .zl{display:inline-block;min-width:88px;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
 .who{font-size:13px;color:var(--muted);margin-top:4px}
 .note{font-size:13px;margin-top:4px}
+h3{font-size:12px;margin:16px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+details.loot{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+details.loot summary{cursor:pointer;font-weight:600;font-size:14px}
+.lrow{display:grid;grid-template-columns:minmax(0,1fr) 60px 100px 96px 36px;gap:6px;margin-top:6px;align-items:center}
+.lrow input,.lrow select{width:100%;min-width:0;min-height:32px;padding:4px 8px}
+.lrow button{padding:4px 6px}
+.lrow.lh{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.lrow.add button{grid-column:span 2}
+.split,.sum{font-size:13px;margin-top:10px}
+.split label,.sum label{display:inline-flex;align-items:center;margin:2px 0 2px 10px;cursor:pointer}
+.sum b{font-variant-numeric:tabular-nums}
+.sum .mine{color:var(--good);font-weight:600}
+@media(max-width:560px){.lrow{grid-template-columns:60px minmax(0,1fr) 96px 36px}.lrow>:first-child{grid-column:1/-1}.lrow.lh{display:none}}
 form.row{margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
 form.row input[type=text]{flex:1 1 150px}
 .tabs{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
@@ -217,9 +230,19 @@ function normalize(d) {
     const slots = Array.isArray(p.slots) ? p.slots.filter(n => Number.isInteger(n) && n >= 0 && n < 168) : [];
     return { id: String(p.id), name: String(p.name || "?"), tz: validTz(p.tz), cls: p.cls || "", slots, slotSet: new Set(slots) };
   }).sort((a, b) => a.name.localeCompare(b.name));
-  const runs = (d.runs || []).filter(r => !isNaN(Date.parse(r.start))).map(r => ({ id: String(r.id), name: String(r.name || "Dungeon run"), start: r.start, note: r.note || "", by: r.by || null, members: Array.isArray(r.members) ? r.members : [], classes: r.classes && typeof r.classes === "object" ? r.classes : {} }));
+  const runs = (d.runs || []).filter(r => !isNaN(Date.parse(r.start))).map(r => {
+    // Loot and the "received" ticks are stored inside the `classes` column (keys _loot and _paid),
+    // so the database needs no new columns. serRun() puts them back when saving.
+    const { _loot, _paid, ...classes } = r.classes && typeof r.classes === "object" ? r.classes : {};
+    const loot = (Array.isArray(_loot) ? _loot : []).map(it => {
+      const qty = Math.min(Math.max(Math.round(+it.qty) || 1, 1), 99);
+      return { id: String(it.id), name: String(it.name || "Item"), qty, price: Math.max(+it.price || 0, 0), sold: Math.min(Math.max(Math.round(+it.sold) || 0, 0), qty) };
+    });
+    return { id: String(r.id), name: String(r.name || "Dungeon run"), start: r.start, note: r.note || "", by: r.by || null, members: Array.isArray(r.members) ? r.members : [], classes, loot, paid: _paid && typeof _paid === "object" ? _paid : {} };
+  });
   return { players, runs };
 }
+const serRun = r => ({ id: r.id, name: r.name, start: r.start, note: r.note, by: r.by, members: r.members, classes: { ...r.classes, _loot: r.loot, _paid: r.paid } });
 const ser = p => ({ id: p.id, name: p.name, tz: p.tz, cls: p.cls, slots: p.slots });
 const mePlayer = () => state.players.find(p => p.id === me);
 const nameOf = id => (state.players.find(p => p.id === id) || {}).name;
@@ -292,24 +315,111 @@ function countdown(ms) {
   return "in " + (days ? `${days}d ${h}h` : h ? `${h}h ${m % 60}m` : `${m}m`);
 }
 
-function renderRuns() {
-  const list = state.runs.filter(r => at(r) > Date.now() - 3 * HOUR).sort((a, b) => at(a) - at(b));
-  if (!list.length) { $("runs").innerHTML = '<p class="empty">No runs planned yet. Pick a time below, or use "Plan a run" on one of the best times.</p>'; return; }
-  const hasMe = !!mePlayer();
-  $("runs").innerHTML = list.map(r => {
-    const names = r.members.map(id => tag(id, r)).filter(Boolean), inRun = hasMe && r.members.includes(me);
-    return `<div class="item">
-      <div class="title">${esc(r.name)} <span class="pill">${countdown(at(r))}</span> <span class="pill soft">${names.length} of ${state.players.length} in</span></div>
-      ${dualHtml(at(r))}
-      ${r.note ? `<div class="note">${esc(r.note)}</div>` : ""}
-      <div class="who">${names.length ? "Going: " + names.map(esc).join(", ") : "Nobody has joined yet."}</div>
-      <div class="row">
-        <button class="small ${inRun ? "ghost" : ""}" data-act="${inRun ? "leave" : "join"}" data-id="${esc(r.id)}" ${hasMe ? "" : "disabled"}>${inRun ? "Leave" : "I'm in"}</button>
-        ${inRun ? `<select class="small" data-cls="${esc(r.id)}" aria-label="Class you bring to this run">${classOptions(r.classes[me] || "", "Class for this run…")}</select>` : ""}
-        <button class="small ghost" data-act="copy" data-id="${esc(r.id)}">Copy invite</button>
-        <button class="small ghost" data-act="del" data-id="${esc(r.id)}">Delete</button>
-      </div></div>`;
-  }).join("");
+// ---------- loot ----------
+const DAY = 24 * HOUR;
+const openLoot = new Set(); // runs whose loot panel is open, so re-rendering keeps them open
+const clampQty = v => Math.min(Math.max(Math.round(+v) || 1, 1), 99);
+// Accepts 50m, 500k, 1.5b, or a plain number. Returns penya, or NaN if unreadable.
+function parsePenya(s) {
+  const m = String(s).trim().toLowerCase().replace(/,/g, "").match(/^(\d+(?:\.\d+)?)\s*([kmb]?)$/);
+  return m ? Math.round(parseFloat(m[1]) * ({ k: 1e3, m: 1e6, b: 1e9 }[m[2]] || 1)) : NaN;
+}
+function fmtP(n) {
+  n = Math.round(n);
+  const f = (v, s) => +v.toFixed(2) + s;
+  return n >= 1e9 ? f(n / 1e9, "b") : n >= 1e6 ? f(n / 1e6, "m") : n >= 1e3 ? f(n / 1e3, "k") : String(n);
+}
+function lootTotals(r) {
+  const who = r.members.filter(id => nameOf(id));
+  return { who, n: who.length, total: r.loot.reduce((s, it) => s + it.qty * it.price, 0), sold: r.loot.reduce((s, it) => s + it.sold * it.price, 0) };
+}
+const soldOptions = it => Array.from({ length: it.qty + 1 }, (_, i) => `<option value="${i}"${i === it.sold ? " selected" : ""}>${i} sold</option>`).join("");
+function lootHead(r) {
+  if (!r.loot.length) return "Loot and penya split";
+  const t = lootTotals(r);
+  return `Loot: ${fmtP(t.total)} penya` + (t.n ? ` · ${fmtP(t.total / t.n)} each` : "");
+}
+function lootSummary(r) {
+  if (!r.loot.length) return '<p class="hint">Add each item that dropped, with the price you expect for one piece (for example 50m).</p>';
+  const t = lootTotals(r);
+  if (!t.n) return `<div class="sum">Total value <b>${fmtP(t.total)}</b> penya. Tick who shares the loot to see each share.</div>`;
+  const all = t.total > 0 && t.sold >= t.total, each = t.n === 1 ? "the 1 player" : `each of the ${t.n} players`;
+  return `<div class="sum">
+    <div>Total value <b>${fmtP(t.total)}</b> penya · sold so far <b>${fmtP(t.sold)}</b></div>
+    <div>${all ? "Everything is sold:" : "When everything is sold,"} ${each} gets <b>${fmtP(t.total / t.n)}</b>.</div>
+    ${!all && t.sold ? `<div>From what is sold so far, ${each} gets <b>${fmtP(t.sold / t.n)}</b>.</div>` : ""}
+    ${t.who.includes(me) ? `<div class="mine">Your share: <b>${fmtP(t.total / t.n)}</b> penya${r.paid[me] ? " · marked as received" : ""}</div>` : ""}
+    <div>Received their share: ${t.who.map(id => `<label><input type="checkbox" data-paid="${esc(r.id)}" value="${esc(id)}"${r.paid[id] ? " checked" : ""}> ${esc(nameOf(id))}</label>`).join("")}</div>
+  </div>`;
+}
+function lootHtml(r) {
+  const id = esc(r.id);
+  return `<details class="loot" data-loot="${id}"${openLoot.has(r.id) ? " open" : ""}>
+    <summary data-head>${esc(lootHead(r))}</summary>
+    ${r.loot.length ? '<div class="lrow lh"><span>Item</span><span>Qty</span><span>Price each</span><span>Sold</span><span></span></div>' : ""}
+    ${r.loot.map(it => `<div class="lrow" data-run="${id}" data-item="${esc(it.id)}">
+      <input type="text" data-f="name" value="${esc(it.name)}" maxlength="40" aria-label="Item name">
+      <input type="number" data-f="qty" value="${it.qty}" min="1" max="99" aria-label="Quantity">
+      <input type="text" data-f="price" value="${fmtP(it.price)}" maxlength="12" aria-label="Price for one piece">
+      <select data-f="sold" aria-label="How many are sold">${soldOptions(it)}</select>
+      <button type="button" class="small ghost" data-act="lootdel" data-id="${id}" data-item="${esc(it.id)}" aria-label="Remove ${esc(it.name)}">✕</button>
+    </div>`).join("")}
+    <div class="lrow add" data-run="${id}">
+      <input type="text" data-n="name" placeholder="Item, e.g. Sunstone" maxlength="40" aria-label="New item name">
+      <input type="number" data-n="qty" value="1" min="1" max="99" aria-label="New item quantity">
+      <input type="text" data-n="price" placeholder="Price each" maxlength="12" aria-label="New item price for one piece">
+      <button type="button" class="small" data-act="lootadd" data-id="${id}">Add loot</button>
+    </div>
+    <div class="split">Split between: ${state.players.map(p => `<label><input type="checkbox" data-mem="${id}" value="${esc(p.id)}"${r.members.includes(p.id) ? " checked" : ""}> ${esc(p.name)}</label>`).join("")}</div>
+    <div data-sum>${lootSummary(r)}</div>
+  </details>`;
+}
+// The selected player's penya across every run they share loot in.
+function myPenyaHtml() {
+  if (!mePlayer()) return "";
+  let expected = 0, waiting = 0, received = 0;
+  for (const r of state.runs) {
+    const t = lootTotals(r);
+    if (!t.who.includes(me)) continue;
+    expected += t.total / t.n;
+    if (r.paid[me]) received += t.sold / t.n; else waiting += t.sold / t.n;
+  }
+  if (!expected) return "";
+  return `<div class="item"><div class="title">Your penya from loot</div><div class="sum">Expected in total: <b>${fmtP(expected)}</b> · sold and waiting for you: <b>${fmtP(waiting)}</b> · already received: <b>${fmtP(received)}</b></div></div>`;
+}
+function updateLootView(r) {
+  const det = [...document.querySelectorAll("#runs details.loot")].find(d => d.dataset.loot === r.id);
+  if (det) { det.querySelector("[data-head]").textContent = lootHead(r); det.querySelector("[data-sum]").innerHTML = lootSummary(r); }
+  $("myPenya").innerHTML = myPenyaHtml();
+}
+
+function runCard(r, past) {
+  const hasMe = !!mePlayer(), names = r.members.map(id => tag(id, r)).filter(Boolean), inRun = hasMe && r.members.includes(me);
+  return `<div class="item">
+    <div class="title">${esc(r.name)} <span class="pill ${past ? "soft" : ""}">${past ? "Finished" : countdown(at(r))}</span> <span class="pill soft">${names.length} of ${state.players.length} in</span></div>
+    ${dualHtml(at(r))}
+    ${r.note ? `<div class="note">${esc(r.note)}</div>` : ""}
+    <div class="who">${names.length ? (past ? "Went: " : "Going: ") + names.map(esc).join(", ") : "Nobody has joined yet."}</div>
+    <div class="row">
+      <button class="small ${inRun ? "ghost" : ""}" data-act="${inRun ? "leave" : "join"}" data-id="${esc(r.id)}" ${hasMe ? "" : "disabled"}>${inRun ? "Leave" : "I'm in"}</button>
+      ${inRun ? `<select class="small" data-cls="${esc(r.id)}" aria-label="Class you bring to this run">${classOptions(r.classes[me] || "", "Class for this run…")}</select>` : ""}
+      ${past ? "" : `<button class="small ghost" data-act="copy" data-id="${esc(r.id)}">Copy invite</button>`}
+      <button class="small ghost" data-act="del" data-id="${esc(r.id)}">Delete</button>
+    </div>
+    ${lootHtml(r)}
+  </div>`;
+}
+
+function renderRuns(force) {
+  const box = $("runs"), a = document.activeElement;
+  // A background re-render must not wipe a field someone is typing in.
+  if (!force && a && box.contains(a) && a.matches("input:not([type=checkbox]),select")) return;
+  const now = Date.now();
+  const up = state.runs.filter(r => at(r) > now - 3 * HOUR).sort((x, y) => at(x) - at(y));
+  const past = state.runs.filter(r => at(r) <= now - 3 * HOUR && at(r) > now - 90 * DAY).sort((x, y) => at(y) - at(x)).slice(0, 15);
+  box.innerHTML = `<div id="myPenya">${myPenyaHtml()}</div>`
+    + (up.length ? up.map(r => runCard(r, false)).join("") : '<p class="empty">No runs planned yet. Pick a time below, or use "Plan a run" on one of the best times.</p>')
+    + (past.length ? "<h3>Past runs and loot</h3>" + past.map(r => runCard(r, true)).join("") : "");
 }
 
 function renderBest() {
@@ -413,11 +523,48 @@ $("myClass").addEventListener("change", e => {
   renderBest();
 });
 $("runs").addEventListener("change", async e => {
-  const r = state.runs.find(x => x.id === e.target.dataset.cls);
-  if (!r || !mePlayer()) return;
-  r.classes = { ...r.classes, [me]: e.target.value };
-  renderRuns();
-  await run(store.saveRun(r));
+  const t = e.target, d = t.dataset, row = t.closest("[data-run]");
+  const r = state.runs.find(x => x.id === (d.cls || d.mem || d.paid || (row && row.dataset.run)));
+  if (!r) return;
+  if (d.cls) {                       // class I bring to this run
+    if (!mePlayer()) return;
+    r.classes = { ...r.classes, [me]: t.value };
+    renderRuns(true);
+  } else if (d.mem) {                // who shares the loot
+    r.classes = { ...r.classes };
+    if (t.checked) {
+      const p = state.players.find(x => x.id === t.value);
+      r.members = [...new Set([...r.members, t.value])];
+      r.classes[t.value] = p ? p.cls : "";
+    } else { r.members = r.members.filter(id => id !== t.value); delete r.classes[t.value]; }
+    renderRuns(true);
+  } else if (d.paid) {               // who has received their share
+    r.paid = { ...r.paid, [t.value]: t.checked };
+    renderRuns(true);
+  } else if (d.f) {                  // a field of an existing loot line
+    const it = r.loot.find(x => x.id === row.dataset.item);
+    if (!it) return;
+    if (d.f === "name") { it.name = t.value.trim() || it.name; t.value = it.name; }
+    else if (d.f === "qty") {
+      it.qty = clampQty(t.value); t.value = it.qty;
+      it.sold = Math.min(it.sold, it.qty);
+      row.querySelector("[data-f=sold]").innerHTML = soldOptions(it);
+    } else if (d.f === "price") {
+      const p = parsePenya(t.value);
+      if (isNaN(p)) { toast("Write the price like 50m, 500k or 1.5b."); t.value = fmtP(it.price); return; }
+      it.price = p; t.value = fmtP(p);
+    } else if (d.f === "sold") it.sold = Math.min(+t.value || 0, it.qty);
+    updateLootView(r); // update totals in place so the next field keeps focus
+  } else return;
+  await run(store.saveRun(serRun(r)));
+});
+$("runs").addEventListener("toggle", e => {
+  const id = e.target.dataset && e.target.dataset.loot;
+  if (id) { if (e.target.open) openLoot.add(id); else openLoot.delete(id); }
+}, true);
+$("runs").addEventListener("keydown", e => {
+  const row = e.target.closest(".lrow.add");
+  if (row && e.key === "Enter") { e.preventDefault(); row.querySelector("[data-act=lootadd]").click(); }
 });
 $("addPlayer").addEventListener("click", async () => {
   const name = $("newName").value.trim();
@@ -489,11 +636,11 @@ $("runForm").addEventListener("submit", async e => {
   e.preventDefault();
   const ms = new Date($("when").value).getTime();
   if (isNaN(ms)) { toast("Pick a start time first."); return; }
-  const r = { id: uid(), name: $("runName").value.trim() || "Dungeon run", start: new Date(ms).toISOString(), note: $("runNote").value.trim(), by: mePlayer() ? me : null, members: mePlayer() ? [me] : [], classes: mePlayer() ? { [me]: mePlayer().cls } : {} };
+  const r = { id: uid(), name: $("runName").value.trim() || "Dungeon run", start: new Date(ms).toISOString(), note: $("runNote").value.trim(), by: mePlayer() ? me : null, members: mePlayer() ? [me] : [], classes: mePlayer() ? { [me]: mePlayer().cls } : {}, loot: [], paid: {} };
   state.runs.push(r);
   $("runName").value = ""; $("runNote").value = "";
   renderRuns();
-  await run(store.saveRun(r));
+  await run(store.saveRun(serRun(r)));
 });
 $("runs").addEventListener("click", async e => {
   const b = e.target.closest("[data-act]");
@@ -501,6 +648,23 @@ $("runs").addEventListener("click", async e => {
   const r = state.runs.find(x => x.id === b.dataset.id);
   if (!r) return;
   const act = b.dataset.act;
+  if (act === "lootadd") {
+    const row = b.closest(".lrow"), get = n => row.querySelector(`[data-n=${n}]`).value.trim();
+    const name = get("name"), price = get("price") ? parsePenya(get("price")) : 0;
+    if (!name) { row.querySelector("[data-n=name]").focus(); return; }
+    if (isNaN(price)) { toast("Write the price like 50m, 500k or 1.5b."); return; }
+    r.loot = [...r.loot, { id: uid(), name, qty: clampQty(get("qty")), price, sold: 0 }];
+    openLoot.add(r.id);
+    renderRuns(true);
+    return run(store.saveRun(serRun(r)));
+  }
+  if (act === "lootdel") {
+    const it = r.loot.find(x => x.id === b.dataset.item);
+    if (!it || !confirm(`Remove ${it.name} from the loot list?`)) return;
+    r.loot = r.loot.filter(x => x !== it);
+    renderRuns(true);
+    return run(store.saveRun(serRun(r)));
+  }
   if (act === "copy") {
     const link = location.protocol.startsWith("http") ? "\n" + location.href : "";
     const going = r.members.map(id => tag(id, r)).filter(Boolean);
@@ -517,7 +681,7 @@ $("runs").addEventListener("click", async e => {
   if (act === "join") { r.members = [...new Set([...r.members, me])]; r.classes[me] = mePlayer().cls; }
   else { r.members = r.members.filter(id => id !== me); delete r.classes[me]; }
   renderRuns();
-  await run(store.saveRun(r));
+  await run(store.saveRun(serRun(r)));
 });
 
 // ---------- start ----------
