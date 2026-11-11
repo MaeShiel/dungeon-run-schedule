@@ -61,7 +61,7 @@ details.loot summary{cursor:pointer;font-weight:600;font-size:14px}
 .thumb img{width:100%;height:100%;object-fit:contain;display:block}
 @media(max-width:560px){
   .lrow{grid-template-columns:56px minmax(0,1fr) 96px 36px}
-  .lrow [data-f=name]{grid-column:2/-1}
+  .lrow [data-f=name],.lrow .ln{grid-column:2/-1}
   .lrow.add [data-n=name]{grid-column:1/-1}
   .lrow.lh{display:none}
 }
@@ -82,6 +82,17 @@ input[type=checkbox]{min-height:0;padding:0;margin:0 4px 0 0;accent-color:var(--
 .c.on{background:var(--accent)}
 .c.full{background:var(--good);color:#fff}
 .c:disabled{opacity:.6}
+.chips{display:inline-flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:2px;background:var(--cell);border-radius:99px;padding:3px 4px 3px 10px;font-size:13px}
+.chip button{min-height:0;padding:0 6px;background:transparent;color:var(--muted);border:0;font-weight:400}
+.lrow.ro{font-size:14px}
+.lrow.ro .muted{color:var(--muted);font-size:13px}
+.split select{min-height:30px;padding:3px 8px;margin-left:6px}
+dialog{border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--ink);padding:18px;width:min(340px,90vw)}
+dialog::backdrop{background:rgba(0,0,0,.55)}
+#pinInput{width:100%;font-size:22px;letter-spacing:.4em;text-align:center}
+#pinErr{color:var(--warn);font-size:13px;min-height:18px;margin:6px 0 0}
+.foot{text-align:center;margin:0 0 20px}
 #toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:10px;font-size:13px;max-width:90vw}
 </style>
 </head>
@@ -102,12 +113,14 @@ input[type=checkbox]{min-height:0;padding:0;margin:0 4px 0 0;accent-color:var(--
     <div class="head"><h2>Who are you?</h2></div>
     <div class="row">
       <select id="who" aria-label="Your name"></select>
-      <select id="myClass" aria-label="Your Flyff class"></select>
+      <span class="chips" id="myClasses"></span>
+      <select id="myClass" aria-label="Add a Flyff class you play"></select>
       <button class="ghost small" id="removeMe" type="button">Remove</button>
       <span class="grow"></span>
       <input id="newName" type="text" placeholder="New player name" maxlength="24" aria-label="New player name">
       <button id="addPlayer" type="button">Add player</button>
     </div>
+    <p class="hint" id="whoHint" style="margin:10px 0 0"></p>
   </section>
 
   <section class="card">
@@ -117,6 +130,7 @@ input[type=checkbox]{min-height:0;padding:0;margin:0 4px 0 0;accent-color:var(--
       <input type="text" id="runName" placeholder="Dungeon name" maxlength="40" aria-label="Dungeon name">
       <input type="datetime-local" id="when" required aria-label="Start time in your local time">
       <input type="text" id="runNote" placeholder="Note (optional)" maxlength="80" aria-label="Note">
+      <select id="runLeader" aria-label="Leader of this run"></select>
       <button type="submit">Create run</button>
     </form>
     <div id="whenPreview"></div>
@@ -139,7 +153,22 @@ input[type=checkbox]{min-height:0;padding:0;margin:0 4px 0 0;accent-color:var(--
     <div id="grid"></div>
     <div class="row" style="margin-top:10px"><button class="ghost small" id="clearMine" type="button">Clear my hours</button></div>
   </section>
+  <div class="foot"><button class="ghost small" id="ownerBtn" type="button" hidden>Set owner PIN</button></div>
 </main>
+<dialog id="pinDlg">
+  <form id="pinForm">
+    <h2 id="pinTitle"></h2>
+    <p class="hint" id="pinText" style="margin:6px 0 12px"></p>
+    <input id="pinInput" type="password" inputmode="numeric" maxlength="4" autocomplete="off" aria-label="4-digit PIN">
+    <p id="pinErr"></p>
+    <div class="row">
+      <button type="submit">OK</button>
+      <button type="button" class="ghost" id="pinCancel">Cancel</button>
+      <span class="grow"></span>
+      <button type="button" class="ghost small" id="pinForgot" hidden>Forgot PIN</button>
+    </div>
+  </form>
+</dialog>
 <div id="toast" hidden></div>
 <input type="file" id="picInput" accept="image/*" hidden>
 <datalist id="itemNames"></datalist>
@@ -158,6 +187,9 @@ const CLASSES = [
 ];
 const classOptions = (sel, blank) => `<option value="">${blank}</option>` + CLASSES.map(([g, list]) =>
   `<optgroup label="${g}">${list.map(c => `<option${c === sel ? " selected" : ""}>${c}</option>`).join("")}</optgroup>`).join("");
+// A player can play several classes. They are stored as plain text, "Arcanist + Seraph".
+const ALL_CLASSES = CLASSES.flatMap(([, list]) => list);
+const splitCls = s => String(s || "").split(/\s*\+\s*/).filter(c => ALL_CLASSES.includes(c));
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -204,6 +236,8 @@ function dualText(ms) { return allZones().map(([tz, label]) => `${label}: ${fmtW
 
 // ---------- storage ----------
 const ITEM_ID = "_item:";
+// PINs are also hidden rows in the runs table: id "_pin:<player id>", or "_pin:_owner" for the owner PIN.
+const PIN_ID = "_pin:", OWNER = "_owner", EPOCH = "1970-01-01T00:00:00Z";
 const remote = !!(CONFIG.supabaseUrl && CONFIG.supabaseKey);
 async function api(path, opts = {}) {
   const r = await fetch(CONFIG.supabaseUrl.replace(/\/$/, "") + "/rest/v1/" + path, { ...opts, headers: { apikey: CONFIG.supabaseKey, "Content-Type": "application/json", ...(opts.headers || {}) } });
@@ -241,8 +275,13 @@ const localStore = {
 const store = remote ? remoteStore : localStore;
 
 // ---------- state ----------
-let state = { players: [], runs: [] };
+let state = { players: [], runs: [], pins: {} };
+let loaded = false;
 let me = lsGet("drs.me") || "";
+// PINs this device has entered, so each player types theirs only once per device.
+let myPins = {};
+try { myPins = JSON.parse(lsGet("drs.pins")) || {}; } catch {}
+const savePins = () => lsSet("drs.pins", JSON.stringify(myPins));
 let mode = "my";
 let need = +lsGet("drs.need") || 0;
 let dirty = false, saveTimer = null, painting = null, teamMap = {};
@@ -252,22 +291,92 @@ function normalize(d) {
     const slots = Array.isArray(p.slots) ? p.slots.filter(n => Number.isInteger(n) && n >= 0 && n < 168) : [];
     return { id: String(p.id), name: String(p.name || "?"), tz: validTz(p.tz), cls: p.cls || "", slots, slotSet: new Set(slots) };
   }).sort((a, b) => a.name.localeCompare(b.name));
-  const runs = (d.runs || []).filter(r => !isNaN(Date.parse(r.start)) && !String(r.id).startsWith(ITEM_ID)).map(r => {
-    // Loot and the "received" ticks are stored inside the `classes` column (keys _loot and _paid),
+  const pins = {};
+  for (const r of d.runs || []) if (String(r.id).startsWith(PIN_ID) && r.classes && typeof r.classes._pin === "string") pins[String(r.id).slice(PIN_ID.length)] = r.classes._pin;
+  const runs = (d.runs || []).filter(r => !isNaN(Date.parse(r.start)) && !String(r.id).startsWith("_")).map(r => {
+    // Loot, the "received" ticks and the leader are stored inside the `classes` column (keys _loot, _paid, _leader),
     // so the database needs no new columns. serRun() puts them back when saving.
-    const { _loot, _paid, ...classes } = r.classes && typeof r.classes === "object" ? r.classes : {};
+    const { _loot, _paid, _leader, ...classes } = r.classes && typeof r.classes === "object" ? r.classes : {};
     const loot = (Array.isArray(_loot) ? _loot : []).map(it => {
       const qty = Math.min(Math.max(Math.round(+it.qty) || 1, 1), 99);
       return { id: String(it.id), name: String(it.name || "Item"), qty, price: Math.max(+it.price || 0, 0), sold: Math.min(Math.max(Math.round(+it.sold) || 0, 0), qty) };
     });
-    return { id: String(r.id), name: String(r.name || "Dungeon run"), start: r.start, note: r.note || "", by: r.by || null, members: Array.isArray(r.members) ? r.members : [], classes, loot, paid: _paid && typeof _paid === "object" ? _paid : {} };
+    return { id: String(r.id), name: String(r.name || "Dungeon run"), start: r.start, note: r.note || "", by: r.by || null, members: Array.isArray(r.members) ? r.members : [], classes, loot, paid: _paid && typeof _paid === "object" ? _paid : {}, leader: typeof _leader === "string" ? _leader : null };
   });
-  return { players, runs };
+  return { players, runs, pins };
 }
-const serRun = r => ({ id: r.id, name: r.name, start: r.start, note: r.note, by: r.by, members: r.members, classes: { ...r.classes, _loot: r.loot, _paid: r.paid } });
+const serRun = r => ({ id: r.id, name: r.name, start: r.start, note: r.note, by: r.by, members: r.members, classes: { ...r.classes, _loot: r.loot, _paid: r.paid, _leader: r.leader } });
 const ser = p => ({ id: p.id, name: p.name, tz: p.tz, cls: p.cls, slots: p.slots });
-const mePlayer = () => state.players.find(p => p.id === me);
 const nameOf = id => (state.players.find(p => p.id === id) || {}).name;
+
+// ---------- PIN lock ----------
+// This keeps teammates from changing each other's data by mistake. It is checked in the page only:
+// the database itself still accepts changes from anyone who has the link.
+function hashPin(id, pin) { // cyrb53, a small non-secret hash so PINs are not stored as plain digits
+  const s = id + ":" + pin;
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+const hasPin = id => !!state.pins[id];
+const unlocked = id => hasPin(id) && state.pins[id] === hashPin(id, myPins[id] || "");
+// The signed-in player: the chosen name counts only when this device knows its PIN.
+const mePlayer = () => unlocked(me) ? state.players.find(p => p.id === me) : undefined;
+// A run's leader. Runs made before leaders existed fall back to whoever created them.
+const leaderOf = r => { const id = r.leader || r.by; return id && nameOf(id) ? id : null; };
+const isLeader = r => !!mePlayer() && leaderOf(r) === me;
+
+let pinResolve = null;
+// Shows the PIN dialog. Resolves to the 4 digits, "forgot", or null when cancelled.
+function askPin(title, text, forgot, err) {
+  $("pinTitle").textContent = title; $("pinText").textContent = text; $("pinErr").textContent = err || "";
+  $("pinInput").value = ""; $("pinForgot").hidden = !forgot;
+  if (!$("pinDlg").open) $("pinDlg").showModal();
+  $("pinInput").focus();
+  return new Promise(resolve => { pinResolve = resolve; });
+}
+function closePin(v) {
+  const resolve = pinResolve; pinResolve = null;
+  if ($("pinDlg").open) $("pinDlg").close();
+  if (resolve) resolve(v);
+}
+async function setPin(id, pin) {
+  state.pins = { ...state.pins, [id]: hashPin(id, pin) };
+  myPins[id] = pin; savePins();
+  await run(store.saveRun({ id: PIN_ID + id, name: "_pin", start: EPOCH, note: "", by: null, members: [], classes: { _pin: state.pins[id] } }));
+}
+async function ownerReset(id) {
+  if (!hasPin(OWNER)) { toast("No owner PIN has been set yet, so a forgotten PIN cannot be reset."); return false; }
+  const pin = await askPin("Owner PIN", "Only the site owner can reset a forgotten PIN.");
+  if (!pin) return false;
+  if (hashPin(OWNER, pin) !== state.pins[OWNER]) { toast("Wrong owner PIN."); return false; }
+  const pins = { ...state.pins }; delete pins[id]; state.pins = pins;
+  delete myPins[id]; savePins();
+  await run(store.deleteRun(PIN_ID + id));
+  return true;
+}
+// Makes sure this device may act as the player: asks for their PIN, or lets them create one the first time.
+async function signIn(id) {
+  const p = state.players.find(x => x.id === id);
+  if (!p) return false;
+  if (unlocked(id)) return true;
+  if (!hasPin(id)) {
+    const pin = await askPin(`Create a PIN for ${p.name}`, "Choose 4 digits and remember them. You need this PIN to change your hours, classes and runs on another device.");
+    if (!pin || pin === "forgot") return false;
+    await setPin(id, pin);
+    return true;
+  }
+  let err = "";
+  for (;;) {
+    const pin = await askPin(`PIN for ${p.name}`, "Enter this player's 4-digit PIN.", true, err);
+    if (!pin) return false;
+    if (pin === "forgot") return (await ownerReset(id)) ? signIn(id) : false;
+    if (hashPin(id, pin) === state.pins[id]) { myPins[id] = pin; savePins(); return true; }
+    err = "Wrong PIN. Try again.";
+  }
+}
 // "Name (Class)". Pass a run to use the class picked for that run.
 function tag(id, r) {
   const p = state.players.find(x => x.id === id);
@@ -291,7 +400,7 @@ async function refresh() {
   try {
     const data = normalize(await store.load());
     if (seen !== edits || dirty || pending || painting !== null) return void setTimeout(refresh, 3000);
-    state = data; render();
+    state = data; loaded = true; render();
   } catch (e) { console.error(e); toast("Could not load the schedule."); }
 }
 function queueSave(p) {
@@ -323,12 +432,22 @@ function renderClocks() {
 function renderWho() {
   const sel = $("who");
   sel.innerHTML = '<option value="">Choose your name…</option>' + state.players.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
-  const p = mePlayer();
+  const p = mePlayer(), mine = p ? splitCls(p.cls) : [];
   sel.value = p ? me : "";
-  $("myClass").innerHTML = classOptions(p ? p.cls : "", "Choose your class…");
-  $("myClass").disabled = !p;
+  $("myClasses").innerHTML = mine.map(c => `<span class="chip">${c}<button type="button" data-rmcls="${c}" aria-label="Remove ${c}">✕</button></span>`).join("");
+  $("myClass").innerHTML = classOptions("", mine.length ? "Add another class…" : "Choose your class…");
+  $("myClass").disabled = !p || mine.length >= 4;
   $("removeMe").disabled = !p;
+  $("whoHint").textContent = p
+    ? `Signed in as ${p.name} on this device. Only you can change your hours and classes.`
+    : "Choose your name and enter your PIN to make changes. Anyone can look without signing in.";
+  // Leader picker in the run form: defaults to the signed-in player until they choose someone else.
+  const ls = $("runLeader"), keep = ls.value;
+  ls.innerHTML = state.players.map(x => `<option value="${esc(x.id)}">Leader: ${esc(x.name)}</option>`).join("");
+  ls.value = leaderTouched && state.players.some(x => x.id === keep) ? keep : (p ? me : "");
+  $("ownerBtn").hidden = !loaded || hasPin(OWNER);
 }
+let leaderTouched = false;
 
 function countdown(ms) {
   const d = ms - Date.now();
@@ -402,23 +521,42 @@ function lootHead(r) {
   return `Loot: ${fmtP(t.total)} penya` + (t.n ? ` · ${fmtP(t.total / t.n)} each` : "");
 }
 function lootSummary(r) {
-  if (!r.loot.length) return '<p class="hint">Add each item that dropped, with the price you expect for one piece (for example 50m).</p>';
+  const lead = isLeader(r);
+  if (!r.loot.length) return `<p class="hint">${lead ? "Add each item that dropped, with the price you expect for one piece (for example 50m)." : "Only the run leader can add loot. It will show here."}</p>`;
   const t = lootTotals(r);
-  if (!t.n) return `<div class="sum">Total value <b>${fmtP(t.total)}</b> penya. Tick who shares the loot to see each share.</div>`;
+  if (!t.n) return `<div class="sum">Total value <b>${fmtP(t.total)}</b> penya.${lead ? " Tick who shares the loot to see each share." : ""}</div>`;
+  const got = t.who.filter(id => r.paid[id]).map(id => esc(nameOf(id)));
   const all = t.total > 0 && t.sold >= t.total, each = t.n === 1 ? "the 1 player" : `each of the ${t.n} players`;
   return `<div class="sum">
     <div>Total value <b>${fmtP(t.total)}</b> penya · sold so far <b>${fmtP(t.sold)}</b></div>
     <div>${all ? "Everything is sold:" : "When everything is sold,"} ${each} gets <b>${fmtP(t.total / t.n)}</b>.</div>
     ${!all && t.sold ? `<div>From what is sold so far, ${each} gets <b>${fmtP(t.sold / t.n)}</b>.</div>` : ""}
-    ${t.who.includes(me) ? `<div class="mine">Your share: <b>${fmtP(t.total / t.n)}</b> penya${r.paid[me] ? " · marked as received" : ""}</div>` : ""}
-    <div>Received their share: ${t.who.map(id => `<label><input type="checkbox" data-paid="${esc(r.id)}" value="${esc(id)}"${r.paid[id] ? " checked" : ""}> ${esc(nameOf(id))}</label>`).join("")}</div>
+    ${mePlayer() && t.who.includes(me) ? `<div class="mine">Your share: <b>${fmtP(t.total / t.n)}</b> penya${r.paid[me] ? " · marked as received" : ""}</div>` : ""}
+    <div>Received their share: ${lead
+      ? t.who.map(id => `<label><input type="checkbox" data-paid="${esc(r.id)}" value="${esc(id)}"${r.paid[id] ? " checked" : ""}> ${esc(nameOf(id))}</label>`).join("")
+      : (got.length ? got.join(", ") : "nobody yet")}</div>
   </div>`;
 }
 function lootHtml(r) {
   const id = esc(r.id);
+  const head = r.loot.length ? '<div class="lrow lh"><span>Pic</span><span>Item</span><span>Qty</span><span>Price each</span><span>Sold</span><span></span></div>' : "";
+  // Everyone except the run leader gets a read-only view.
+  if (!isLeader(r)) {
+    const sharing = r.members.map(nameOf).filter(Boolean).map(esc);
+    return `<details class="loot" data-loot="${id}"${openLoot.has(r.id) ? " open" : ""}>
+      <summary data-head>${esc(lootHead(r))}</summary>
+      ${head}
+      ${r.loot.map(it => `<div class="lrow ro">
+        <span class="thumb ${picOf(it.name) ? "has" : ""}">${picOf(it.name) ? thumbInner(it.name) : ""}</span>
+        <span class="ln">${esc(it.name)}</span><span>× ${it.qty}</span><span>${fmtP(it.price)}</span><span class="muted">${it.sold} of ${it.qty} sold</span><span></span>
+      </div>`).join("")}
+      <div class="split">Split between: ${sharing.length ? sharing.join(", ") : "nobody yet"}</div>
+      <div data-sum>${lootSummary(r)}</div>
+    </details>`;
+  }
   return `<details class="loot" data-loot="${id}"${openLoot.has(r.id) ? " open" : ""}>
     <summary data-head>${esc(lootHead(r))}</summary>
-    ${r.loot.length ? '<div class="lrow lh"><span>Pic</span><span>Item</span><span>Qty</span><span>Price each</span><span>Sold</span><span></span></div>' : ""}
+    ${head}
     ${r.loot.map(it => `<div class="lrow" data-run="${id}" data-item="${esc(it.id)}">
       <button type="button" class="thumb ${picOf(it.name) ? "has" : ""}" data-act="lootpic" data-id="${id}" data-item="${esc(it.id)}" title="${picOf(it.name) ? "Change" : "Add"} the picture for ${esc(it.name)}" aria-label="${picOf(it.name) ? "Change" : "Add"} the picture for ${esc(it.name)}">${thumbInner(it.name)}</button>
       <input type="text" data-f="name" value="${esc(it.name)}" maxlength="40" aria-label="Item name">
@@ -434,6 +572,7 @@ function lootHtml(r) {
       <button type="button" class="small" data-act="lootadd" data-id="${id}">Add loot</button>
     </div>
     <div class="split">Split between: ${state.players.map(p => `<label><input type="checkbox" data-mem="${id}" value="${esc(p.id)}"${r.members.includes(p.id) ? " checked" : ""}> ${esc(p.name)}</label>`).join("")}</div>
+    <div class="split">Hand leadership to: <select data-lead="${id}" aria-label="Hand leadership to another player">${state.players.map(p => `<option value="${esc(p.id)}"${p.id === me ? " selected" : ""}>${esc(p.name)}${p.id === me ? " (you)" : ""}</option>`).join("")}</select></div>
     <div data-sum>${lootSummary(r)}</div>
   </details>`;
 }
@@ -457,17 +596,23 @@ function updateLootView(r) {
 }
 
 function runCard(r, past) {
-  const hasMe = !!mePlayer(), names = r.members.map(id => tag(id, r)).filter(Boolean), inRun = hasMe && r.members.includes(me);
+  const p = mePlayer(), hasMe = !!p, id = esc(r.id);
+  const who = r.members.filter(m => nameOf(m)), names = who.map(m => tag(m, r)), inRun = hasMe && r.members.includes(me);
+  // A player who brings two characters still counts as one player (and one loot share).
+  const chars = who.reduce((s, m) => s + Math.max(1, splitCls(r.classes[m]).length), 0);
+  const lead = leaderOf(r), mine = hasMe ? splitCls(p.cls) : [], picked = splitCls(r.classes[me]);
   return `<div class="item">
-    <div class="title">${esc(r.name)} <span class="pill ${past ? "soft" : ""}">${past ? "Finished" : countdown(at(r))}</span> <span class="pill soft">${names.length} of ${state.players.length} in</span></div>
+    <div class="title">${esc(r.name)} <span class="pill ${past ? "soft" : ""}">${past ? "Finished" : countdown(at(r))}</span> <span class="pill soft">${chars > who.length ? `${who.length} player${who.length === 1 ? "" : "s"} · ${chars} characters` :`${who.length} of ${state.players.length} in`}</span></div>
     ${dualHtml(at(r))}
     ${r.note ? `<div class="note">${esc(r.note)}</div>` : ""}
+    <div class="who">Leader: ${lead ? esc(nameOf(lead)) + (isLeader(r) ? " (you)" : "") : "none yet"}</div>
     <div class="who">${names.length ? (past ? "Went: " : "Going: ") + names.map(esc).join(", ") : "Nobody has joined yet."}</div>
     <div class="row">
-      <button class="small ${inRun ? "ghost" : ""}" data-act="${inRun ? "leave" : "join"}" data-id="${esc(r.id)}" ${hasMe ? "" : "disabled"}>${inRun ? "Leave" : "I'm in"}</button>
-      ${inRun ? `<select class="small" data-cls="${esc(r.id)}" aria-label="Class you bring to this run">${classOptions(r.classes[me] || "", "Class for this run…")}</select>` : ""}
-      ${past ? "" : `<button class="small ghost" data-act="copy" data-id="${esc(r.id)}">Copy invite</button>`}
-      <button class="small ghost" data-act="del" data-id="${esc(r.id)}">Delete</button>
+      <button class="small ${inRun ? "ghost" : ""}" data-act="${inRun ? "leave" : "join"}" data-id="${id}" ${hasMe ? "" : "disabled"}>${inRun ? "Leave" : "I'm in"}</button>
+      ${inRun && mine.length > 1 ? `<span class="split" style="margin:0">Playing:${mine.map(c => `<label><input type="checkbox" data-rc="${id}" value="${c}"${picked.includes(c) ? " checked" : ""}> ${c}</label>`).join("")}</span>` : ""}
+      ${past ? "" : `<button class="small ghost" data-act="copy" data-id="${id}">Copy invite</button>`}
+      ${!lead && hasMe ? `<button class="small ghost" data-act="lead" data-id="${id}">Become leader</button>` : ""}
+      ${isLeader(r) ? `<button class="small ghost" data-act="del" data-id="${id}">Delete</button>` : ""}
     </div>
     ${lootHtml(r)}
   </div>`;
@@ -520,7 +665,7 @@ function renderGrid() {
   $("gridHint").textContent = mode === "team"
     ? "Players free each hour over the next 7 days, in your local time. Tap a cell to see who."
     : p ? "Tap the hours you can usually play, in your own local time." + (showBoth ? ` The right column shows the same hour in ${zoneName(otherTz)}.` : "")
-        : "Choose or add your name above to mark your hours.";
+        : "Choose your name above and enter your PIN to mark your own hours.";
   teamMap = {};
   if (mode === "team") for (const h of teamHours()) { const q = partsOf(h.t, browserTz); teamMap[q.dow * 24 + q.hour] = h.who; }
   const diff = Math.round((offsetMin(otherTz) - offsetMin(browserTz)) / 60);
@@ -578,32 +723,76 @@ $("both").addEventListener("change", e => {
   lsSet("drs.both", showBoth ? "1" : "0");
   renderClocks(); updateWhenPreview(); render();
 });
-$("who").addEventListener("change", e => { me = e.target.value; lsSet("drs.me", me); render(); });
-$("myClass").addEventListener("change", e => {
+$("who").addEventListener("change", async e => {
+  const id = e.target.value;
+  if (!id) {                         // "Choose your name…" signs out and forgets the PIN on this device
+    if (me) { delete myPins[me]; savePins(); }
+  } else if (!(await signIn(id))) { renderWho(); return; }
+  me = id; lsSet("drs.me", me); leaderTouched = false; render();
+});
+$("pinForm").addEventListener("submit", e => {
+  e.preventDefault();
+  const v = $("pinInput").value;
+  if (!/^\d{4}$/.test(v)) { $("pinErr").textContent = "The PIN is 4 digits."; return; }
+  closePin(v);
+});
+$("pinCancel").addEventListener("click", () => closePin(null));
+$("pinForgot").addEventListener("click", () => closePin("forgot"));
+$("pinDlg").addEventListener("close", () => closePin(null)); // Esc key
+$("ownerBtn").addEventListener("click", async () => {
+  if (hasPin(OWNER)) return;
+  const pin = await askPin("Create the owner PIN", "The owner PIN can reset a teammate's forgotten PIN. Set it once and keep it private.");
+  if (!pin || pin === "forgot") return;
+  await setPin(OWNER, pin);
+  renderWho();
+  toast("Owner PIN saved.");
+});
+function setMyClasses(list) {
   const p = mePlayer();
   if (!p) return;
-  p.cls = e.target.value;
+  p.cls = list.join(" + ");
   queueSave(p);
-  renderBest();
+  renderWho(); renderRuns(); renderBest();
+}
+$("myClass").addEventListener("change", e => {
+  const p = mePlayer(), c = e.target.value;
+  if (!p || !c) return;
+  setMyClasses([...new Set([...splitCls(p.cls), c])]);
 });
+$("myClasses").addEventListener("click", e => {
+  const b = e.target.closest("[data-rmcls]"), p = mePlayer();
+  if (b && p) setMyClasses(splitCls(p.cls).filter(c => c !== b.dataset.rmcls));
+});
+$("runLeader").addEventListener("change", () => { leaderTouched = true; });
 $("runs").addEventListener("change", async e => {
   const t = e.target, d = t.dataset, row = t.closest("[data-run]");
-  const r = state.runs.find(x => x.id === (d.cls || d.mem || d.paid || (row && row.dataset.run)));
+  const r = state.runs.find(x => x.id === (d.rc || d.mem || d.paid || d.lead || (row && row.dataset.run)));
   if (!r) return;
-  if (d.cls) {                       // class I bring to this run
-    if (!mePlayer()) return;
-    r.classes = { ...r.classes, [me]: t.value };
+  if (d.rc) {                        // which of my classes I bring to this run
+    const p = mePlayer();
+    if (!p || !r.members.includes(me)) return;
+    const set = new Set(splitCls(r.classes[me]));
+    if (t.checked) set.add(t.value); else set.delete(t.value);
+    if (!set.size) { toast("Keep at least one class for this run."); t.checked = true; return; }
+    r.classes = { ...r.classes, [me]: splitCls(p.cls).filter(c => set.has(c)).join(" + ") };
     renderRuns(true);
+  } else if (!isLeader(r)) {         // everything below is for the run leader only
+    return;
   } else if (d.mem) {                // who shares the loot
     r.classes = { ...r.classes };
     if (t.checked) {
       const p = state.players.find(x => x.id === t.value);
       r.members = [...new Set([...r.members, t.value])];
-      r.classes[t.value] = p ? p.cls : "";
+      r.classes[t.value] = (p && splitCls(p.cls)[0]) || "";
     } else { r.members = r.members.filter(id => id !== t.value); delete r.classes[t.value]; }
     renderRuns(true);
   } else if (d.paid) {               // who has received their share
     r.paid = { ...r.paid, [t.value]: t.checked };
+    renderRuns(true);
+  } else if (d.lead) {               // hand leadership to another player
+    if (t.value === me || !nameOf(t.value)) return;
+    if (!confirm(`Make ${nameOf(t.value)} the leader of "${r.name}"? You will no longer be able to edit its loot.`)) { renderRuns(true); return; }
+    r.leader = t.value;
     renderRuns(true);
   } else if (d.f) {                  // a field of an existing loot line
     const it = r.loot.find(x => x.id === row.dataset.item);
@@ -655,19 +844,23 @@ $("addPlayer").addEventListener("click", async () => {
   const p = { id: uid(), name, tz: browserTz, cls: "", slots: [], slotSet: new Set() };
   state.players.push(p);
   state.players.sort((a, b) => a.name.localeCompare(b.name));
-  me = p.id; lsSet("drs.me", me);
   $("newName").value = "";
   render();
   await run(store.savePlayer(ser(p)));
+  // The new player creates their PIN right away; without one they are not signed in.
+  if (await signIn(p.id)) { me = p.id; lsSet("drs.me", me); leaderTouched = false; render(); }
 });
 $("newName").addEventListener("keydown", e => { if (e.key === "Enter") $("addPlayer").click(); });
 $("removeMe").addEventListener("click", async () => {
   const p = mePlayer();
   if (!p || !confirm(`Remove ${p.name} and their hours from the schedule?`)) return;
   state.players = state.players.filter(x => x.id !== p.id);
+  const pins = { ...state.pins }; delete pins[p.id]; state.pins = pins;
+  delete myPins[p.id]; savePins();
   me = ""; lsSet("drs.me", "");
   render();
   await run(store.deletePlayer(p.id));
+  await run(store.deleteRun(PIN_ID + p.id));
 });
 $("need").addEventListener("change", e => { need = +e.target.value; lsSet("drs.need", need); renderBest(); });
 document.querySelector(".tabs").addEventListener("click", e => { const b = e.target.closest("button"); if (b) { mode = b.dataset.mode; renderGrid(); } });
@@ -718,9 +911,13 @@ $("runForm").addEventListener("submit", async e => {
   e.preventDefault();
   const ms = new Date($("when").value).getTime();
   if (isNaN(ms)) { toast("Pick a start time first."); return; }
-  const r = { id: uid(), name: $("runName").value.trim() || "Dungeon run", start: new Date(ms).toISOString(), note: $("runNote").value.trim(), by: mePlayer() ? me : null, members: mePlayer() ? [me] : [], classes: mePlayer() ? { [me]: mePlayer().cls } : {}, loot: [], paid: {} };
+  const p = mePlayer();
+  if (!p) { toast("Choose your name and enter your PIN before creating a run."); return; }
+  const leader = nameOf($("runLeader").value) ? $("runLeader").value : me;
+  const r = { id: uid(), name: $("runName").value.trim() || "Dungeon run", start: new Date(ms).toISOString(), note: $("runNote").value.trim(), by: me, leader, members: [me], classes: { [me]: splitCls(p.cls)[0] || "" }, loot: [], paid: {} };
   state.runs.push(r);
   $("runName").value = ""; $("runNote").value = "";
+  leaderTouched = false; renderWho();
   renderRuns();
   await run(store.saveRun(serRun(r)));
 });
@@ -730,6 +927,13 @@ $("runs").addEventListener("click", async e => {
   const r = state.runs.find(x => x.id === b.dataset.id);
   if (!r) return;
   const act = b.dataset.act;
+  if (["lootadd", "lootpic", "lootdel", "del"].includes(act) && !isLeader(r)) return; // leader only
+  if (act === "lead") {              // a run without a leader can be claimed by any signed-in player
+    if (!mePlayer() || leaderOf(r)) return;
+    r.leader = me;
+    renderRuns(true);
+    return run(store.saveRun(serRun(r)));
+  }
   if (act === "lootadd") {
     const row = b.closest(".lrow"), get = n => row.querySelector(`[data-n=${n}]`).value.trim();
     const name = get("name"), price = get("price") ? parsePenya(get("price")) : 0;
@@ -757,7 +961,7 @@ $("runs").addEventListener("click", async e => {
   if (act === "copy") {
     const link = location.protocol.startsWith("http") ? "\n" + location.href : "";
     const going = r.members.map(id => tag(id, r)).filter(Boolean);
-    return copyText(`${r.name}\n${dualText(at(r))}${r.note ? "\n" + r.note : ""}${going.length ? "\nGoing: " + going.join(", ") : ""}${link}`);
+    return copyText(`${r.name}\n${dualText(at(r))}${r.note ? "\n" + r.note : ""}${leaderOf(r) ? "\nLeader: " + nameOf(leaderOf(r)) : ""}${going.length ? "\nGoing: " + going.join(", ") : ""}${link}`);
   }
   if (act === "del") {
     if (!confirm(`Delete "${r.name}"?`)) return;
@@ -767,7 +971,7 @@ $("runs").addEventListener("click", async e => {
   }
   if (!mePlayer()) return;
   r.classes = { ...r.classes };
-  if (act === "join") { r.members = [...new Set([...r.members, me])]; r.classes[me] = mePlayer().cls; }
+  if (act === "join") { r.members = [...new Set([...r.members, me])]; r.classes[me] = splitCls(mePlayer().cls)[0] || ""; }
   else { r.members = r.members.filter(id => id !== me); delete r.classes[me]; }
   renderRuns();
   await run(store.saveRun(serRun(r)));
